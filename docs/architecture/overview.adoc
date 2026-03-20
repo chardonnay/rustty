@@ -23,15 +23,15 @@ importers, and broader configuration contracts.
 === `rustty-config`
 
 The configuration crate owns RusTTY's versioned serialized config schema,
-sample-config generation, import provenance types, and TOML encode/decode
-helpers.
+sample-config generation, import provenance types, TOML encode/decode helpers,
+and the RusTTY-managed OpenSSH-style known-host store used by SSH-family tools.
 
 === `rustty-transport`
 
 The transport crate owns reusable network-facing protocol helpers. The current
-bootstrap slice exposes password-authenticated SSH `exec` transport for
-`rusplink`, while keeping host-key and authentication policy decisions explicit
-at the application layer.
+bootstrap slice exposes password-authenticated SSH `exec` transport and
+interactive shell sessions with remote PTY allocation for `rusplink`, while
+keeping host-key policy decisions explicit at the application layer.
 
 === `rustty-ui`
 

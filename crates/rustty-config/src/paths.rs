@@ -53,7 +53,20 @@ impl ConfigEnvironment {
 
 /// Returns the default RusTTY config path for the current host.
 pub fn default_config_path() -> Result<PathBuf, ConfigError> {
-    default_config_path_for(platform_for_host(), &ConfigEnvironment::host())
+    default_path_for(
+        platform_for_host(),
+        &ConfigEnvironment::host(),
+        "config.toml",
+    )
+}
+
+/// Returns the default RusTTY known-hosts path for the current host.
+pub fn default_known_hosts_path() -> Result<PathBuf, ConfigError> {
+    default_path_for(
+        platform_for_host(),
+        &ConfigEnvironment::host(),
+        "known_hosts",
+    )
 }
 
 fn platform_for_host() -> Platform {
@@ -66,11 +79,11 @@ fn platform_for_host() -> Platform {
     }
 }
 
-fn default_config_path_for(
+fn default_base_dir_for(
     platform: Platform,
     environment: &ConfigEnvironment,
 ) -> Result<PathBuf, ConfigError> {
-    let path = match platform {
+    match platform {
         Platform::Windows => environment.appdata.clone().map(|path| path.join("RusTTY")),
         Platform::Macos => environment.home_dir.clone().map(|path| {
             path.join("Library")
@@ -95,16 +108,22 @@ fn default_config_path_for(
             Platform::Macos => "HOME",
             Platform::Unix => "XDG_CONFIG_HOME or HOME",
         },
-    })?;
+    })
+}
 
-    Ok(path.join("config.toml"))
+fn default_path_for(
+    platform: Platform,
+    environment: &ConfigEnvironment,
+    file_name: &str,
+) -> Result<PathBuf, ConfigError> {
+    default_base_dir_for(platform, environment).map(|path| path.join(file_name))
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
-    use super::{ConfigEnvironment, Platform, default_config_path_for};
+    use super::{ConfigEnvironment, Platform, default_path_for};
 
     #[test]
     fn unix_prefers_xdg_config_home() {
@@ -113,7 +132,7 @@ mod tests {
             Some("/tmp/xdg".into()),
             None,
         );
-        let path = default_config_path_for(Platform::Unix, &environment)
+        let path = default_path_for(Platform::Unix, &environment, "config.toml")
             .expect("xdg config path should resolve");
         assert_eq!(path, PathBuf::from("/tmp/xdg/rustty/config.toml"));
     }
@@ -122,8 +141,8 @@ mod tests {
     fn unix_falls_back_to_home_config_dir() {
         let environment =
             ConfigEnvironment::from_os_strings(Some("/home/daniel".into()), None, None);
-        let path =
-            default_config_path_for(Platform::Unix, &environment).expect("home path should work");
+        let path = default_path_for(Platform::Unix, &environment, "config.toml")
+            .expect("home path should work");
         assert_eq!(
             path,
             PathBuf::from("/home/daniel/.config/rustty/config.toml")
@@ -134,8 +153,8 @@ mod tests {
     fn macos_uses_application_support() {
         let environment =
             ConfigEnvironment::from_os_strings(Some("/Users/daniel".into()), None, None);
-        let path =
-            default_config_path_for(Platform::Macos, &environment).expect("home path should work");
+        let path = default_path_for(Platform::Macos, &environment, "config.toml")
+            .expect("home path should work");
         assert_eq!(
             path,
             PathBuf::from("/Users/daniel/Library/Application Support/RusTTY/config.toml")
@@ -149,13 +168,25 @@ mod tests {
             None,
             Some("C:\\Users\\daniel\\AppData\\Roaming".into()),
         );
-        let path = default_config_path_for(Platform::Windows, &environment)
+        let path = default_path_for(Platform::Windows, &environment, "config.toml")
             .expect("appdata path should work");
         assert_eq!(
             path,
             PathBuf::from("C:\\Users\\daniel\\AppData\\Roaming")
                 .join("RusTTY")
                 .join("config.toml")
+        );
+    }
+
+    #[test]
+    fn unix_known_hosts_path_shares_same_base_directory() {
+        let environment =
+            ConfigEnvironment::from_os_strings(Some("/home/daniel".into()), None, None);
+        let path = default_path_for(Platform::Unix, &environment, "known_hosts")
+            .expect("known-hosts path should resolve");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/daniel/.config/rustty/known_hosts")
         );
     }
 }

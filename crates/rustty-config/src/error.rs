@@ -1,5 +1,6 @@
 //! Error types for RusTTY configuration loading, saving, and validation.
 
+use ssh_key::Error as SshKeyError;
 use std::{fmt, io, path::PathBuf};
 
 /// Errors returned by RusTTY configuration operations.
@@ -28,6 +29,15 @@ pub enum ConfigError {
     },
     /// A TOML document could not be serialized.
     Serialize(toml::ser::Error),
+    /// A known-hosts document could not be parsed.
+    KnownHostsParse {
+        /// Path of the parsed document.
+        path: PathBuf,
+        /// 1-based line number of the failing record.
+        line: usize,
+        /// Underlying parse error.
+        source: SshKeyError,
+    },
     /// The loaded configuration failed validation.
     Validation(ValidationError),
 }
@@ -46,6 +56,9 @@ impl fmt::Display for ConfigError {
                 write!(formatter, "{}: {source}", path.display())
             }
             Self::Serialize(source) => write!(formatter, "{source}"),
+            Self::KnownHostsParse { path, line, source } => {
+                write!(formatter, "{}:{line}: {source}", path.display())
+            }
             Self::Validation(source) => write!(formatter, "{source}"),
         }
     }
@@ -58,6 +71,7 @@ impl std::error::Error for ConfigError {
             Self::Io { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source),
             Self::Serialize(source) => Some(source),
+            Self::KnownHostsParse { source, .. } => Some(source),
             Self::Validation(source) => Some(source),
         }
     }

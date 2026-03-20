@@ -5,9 +5,15 @@ use std::{
     process,
 };
 
-use rustty_config::{AppConfig, ImportSource, StoredSession, default_config_path, load_config};
+use rustty_config::{
+    AppConfig, ImportSource, StoredSession, default_config_path, default_known_hosts_path,
+    load_config, load_known_host_keys, persist_known_host_key,
+};
 use rustty_core::{HostKeyPolicy, PortForwardSpec, Protocol, StorageFormat};
-use rustty_transport::{HostKeyCheck, SshExecRequest, execute_ssh_command};
+use rustty_transport::{
+    HostKeyCheck, SshExecRequest, SshShellRequest, TerminalSize, VerifiedHostKey,
+    VerifiedHostKeySource, execute_ssh_command, run_interactive_shell,
+};
 
 const DEFAULT_PASSWORD_ENV: &str = "RUSTTY_SSH_PASSWORD";
 const USAGE: &str = "\
@@ -16,28 +22,30 @@ rusplink bootstrap CLI
 Usage:
   rusplink --help
   rusplink --show-default-config-path
+  rusplink --show-default-known-hosts-path
   rusplink --list-sessions [--config PATH]
   rusplink --list-sessions --config=PATH
-  rusplink --session NAME [--config PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session=NAME [--config PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session NAME [--config PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] -- COMMAND...
-  rusplink TARGET [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink TARGET [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] -- COMMAND...
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session=NAME [--config PATH] [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
 
 Notes:
   TARGET supports host, user@host, host:port, and [ipv6-host]:port forms.
   Live SSH execution currently supports password authentication for remote
-  exec requests only.
-  Interactive shell sessions are not implemented yet; provide a command after
-  -- or use --dry-run.
-  Host-key confirmation and persistence are not implemented yet. Use
-  --unsafe-accept-host-key only for disposable/bootstrap testing.
+  exec requests and interactive shell sessions.
+  Host keys are verified against the RusTTY known-hosts file. `accept_new`
+  sessions persist the first trusted server key automatically; `ask` still
+  needs a pre-trusted key because interactive confirmation is not implemented.
+  Use --unsafe-accept-host-key only for disposable/bootstrap testing.
 ";
 
 #[derive(Debug, Eq, PartialEq)]
 enum Command {
     Help,
     ShowDefaultConfigPath,
+    ShowDefaultKnownHostsPath,
     ListSessions { config_path: Option<PathBuf> },
     Plan(PlanRequest),
 }
@@ -45,6 +53,7 @@ enum Command {
 #[derive(Debug, Eq, PartialEq)]
 struct PlanRequest {
     config_path: Option<PathBuf>,
+    known_hosts_path: Option<PathBuf>,
     target: InvocationTarget,
     port_override: Option<u16>,
     dry_run: bool,
@@ -71,6 +80,7 @@ struct DirectTarget {
 struct ConnectionPlan {
     origin: PlanOrigin,
     config_path: Option<PathBuf>,
+    known_hosts_path: PathBuf,
     session_name: Option<String>,
     protocol: Protocol,
     username: Option<String>,
@@ -128,6 +138,10 @@ where
             show_default_config_path(writer)?;
             Ok(RunOutcome::Success)
         }
+        Command::ShowDefaultKnownHostsPath => {
+            show_default_known_hosts_path(writer)?;
+            Ok(RunOutcome::Success)
+        }
         Command::ListSessions { config_path } => {
             list_sessions(config_path, writer)?;
             Ok(RunOutcome::Success)
@@ -164,10 +178,12 @@ where
     let mut port_override = None;
     let mut dry_run = false;
     let mut show_default_config_path = false;
+    let mut show_default_known_hosts_path = false;
     let mut remote_command = Vec::new();
     let mut username_override = None;
     let mut password_env_var = None;
     let mut unsafe_accept_host_key = false;
+    let mut known_hosts_path = None;
 
     let mut index = 0;
     while index < arguments.len() {
@@ -175,6 +191,9 @@ where
         match argument.as_str() {
             "--show-default-config-path" => {
                 show_default_config_path = true;
+            }
+            "--show-default-known-hosts-path" => {
+                show_default_known_hosts_path = true;
             }
             "--list-sessions" => {
                 list_sessions = true;
@@ -193,6 +212,17 @@ where
                     &mut config_path,
                     PathBuf::from(raw_path),
                     "duplicate --config flag",
+                )?;
+                index += 1;
+            }
+            "--known-hosts" => {
+                let raw_path = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| usage_error("missing value for --known-hosts"))?;
+                set_option_once(
+                    &mut known_hosts_path,
+                    PathBuf::from(raw_path),
+                    "duplicate --known-hosts flag",
                 )?;
                 index += 1;
             }
@@ -254,6 +284,12 @@ where
                         raw_name.to_owned(),
                         "duplicate --session flag",
                     )?;
+                } else if let Some(raw_path) = argument.strip_prefix("--known-hosts=") {
+                    set_option_once(
+                        &mut known_hosts_path,
+                        PathBuf::from(raw_path),
+                        "duplicate --known-hosts flag",
+                    )?;
                 } else if let Some(raw_port) = argument.strip_prefix("--port=") {
                     let port = parse_port(raw_port)?;
                     set_option_once(&mut port_override, port, "duplicate --port flag")?;
@@ -291,8 +327,10 @@ where
     let password_env_var = password_env_var.unwrap_or_else(|| DEFAULT_PASSWORD_ENV.to_owned());
 
     if show_default_config_path {
-        if list_sessions
+        if show_default_known_hosts_path
+            || list_sessions
             || config_path.is_some()
+            || known_hosts_path.is_some()
             || session_name.is_some()
             || direct_target.is_some()
             || port_override.is_some()
@@ -310,6 +348,28 @@ where
         return Ok(Command::ShowDefaultConfigPath);
     }
 
+    if show_default_known_hosts_path {
+        if show_default_config_path
+            || list_sessions
+            || config_path.is_some()
+            || known_hosts_path.is_some()
+            || session_name.is_some()
+            || direct_target.is_some()
+            || port_override.is_some()
+            || dry_run
+            || !remote_command.is_empty()
+            || username_override.is_some()
+            || password_env_var != DEFAULT_PASSWORD_ENV
+            || unsafe_accept_host_key
+        {
+            return Err(usage_error(
+                "--show-default-known-hosts-path does not accept additional arguments",
+            ));
+        }
+
+        return Ok(Command::ShowDefaultKnownHostsPath);
+    }
+
     if list_sessions {
         if session_name.is_some()
             || direct_target.is_some()
@@ -319,6 +379,7 @@ where
             || username_override.is_some()
             || password_env_var != DEFAULT_PASSWORD_ENV
             || unsafe_accept_host_key
+            || known_hosts_path.is_some()
         {
             return Err(usage_error(
                 "--list-sessions cannot be combined with connection arguments",
@@ -334,6 +395,7 @@ where
         )),
         (Some(session_name), None) => Ok(Command::Plan(PlanRequest {
             config_path,
+            known_hosts_path,
             target: InvocationTarget::Session(session_name),
             port_override,
             dry_run,
@@ -351,6 +413,7 @@ where
 
             Ok(Command::Plan(PlanRequest {
                 config_path: None,
+                known_hosts_path,
                 target: InvocationTarget::Direct(target),
                 port_override,
                 dry_run,
@@ -369,6 +432,14 @@ where
     W: Write,
 {
     let path = default_config_path().map_err(|error| error.to_string())?;
+    writeln!(writer, "{}", path.display()).map_err(|error| error.to_string())
+}
+
+fn show_default_known_hosts_path<W>(writer: &mut W) -> Result<(), String>
+where
+    W: Write,
+{
+    let path = default_known_hosts_path().map_err(|error| error.to_string())?;
     writeln!(writer, "{}", path.display()).map_err(|error| error.to_string())
 }
 
@@ -403,6 +474,8 @@ where
 }
 
 fn build_connection_plan(request: &PlanRequest) -> Result<ConnectionPlan, String> {
+    let known_hosts_path = resolve_known_hosts_path(request.known_hosts_path.clone())?;
+
     match &request.target {
         InvocationTarget::Session(session_name) => {
             let (config_path, config) = load_resolved_config(request.config_path.clone())?;
@@ -412,15 +485,16 @@ fn build_connection_plan(request: &PlanRequest) -> Result<ConnectionPlan, String
                     config_path.display()
                 )
             })?;
-            build_session_plan(stored_session, config_path, request)
+            build_session_plan(stored_session, config_path, known_hosts_path, request)
         }
-        InvocationTarget::Direct(target) => build_direct_plan(target, request),
+        InvocationTarget::Direct(target) => build_direct_plan(target, known_hosts_path, request),
     }
 }
 
 fn build_session_plan(
     stored_session: &StoredSession,
     config_path: PathBuf,
+    known_hosts_path: PathBuf,
     request: &PlanRequest,
 ) -> Result<ConnectionPlan, String> {
     let session = &stored_session.session;
@@ -444,6 +518,7 @@ fn build_session_plan(
     Ok(ConnectionPlan {
         origin: PlanOrigin::Session,
         config_path: Some(config_path),
+        known_hosts_path,
         session_name: Some(session.name.clone()),
         protocol: session.protocol,
         username: request.username_override.clone(),
@@ -461,6 +536,7 @@ fn build_session_plan(
 
 fn build_direct_plan(
     target: &DirectTarget,
+    known_hosts_path: PathBuf,
     request: &PlanRequest,
 ) -> Result<ConnectionPlan, String> {
     let port = request.port_override.or(target.port).unwrap_or(22);
@@ -471,6 +547,7 @@ fn build_direct_plan(
     Ok(ConnectionPlan {
         origin: PlanOrigin::Direct,
         config_path: None,
+        known_hosts_path,
         session_name: None,
         protocol: Protocol::Ssh,
         username: request
@@ -498,29 +575,37 @@ where
     W: Write,
     E: Write,
 {
-    if plan.remote_command.is_empty() {
-        return Err(
-            "interactive SSH shells are not implemented yet; provide a remote command after -- or \
-             use --dry-run"
-                .to_owned(),
-        );
-    }
-
     let host_key_check = resolve_host_key_check(plan)?;
     let username = resolve_execution_username(plan.username.as_deref())?;
     let password = resolve_password(&plan.password_env_var)?;
-    let command = render_remote_command(&plan.remote_command);
+
+    if plan.remote_command.is_empty() {
+        let request = SshShellRequest {
+            host: plan.host.clone(),
+            port: plan.port,
+            username,
+            password,
+            term_type: resolve_term_type(),
+            terminal_size: resolve_terminal_size()?,
+            host_key_check,
+        };
+        let result = run_interactive_shell(&request)
+            .map_err(|error| format!("rusplink SSH transport failed: {error}"))?;
+        persist_accepted_host_key(plan, &result.verified_host_key, error_writer)?;
+        return Ok(RunOutcome::RemoteExit(result.exit_status));
+    }
 
     let request = SshExecRequest {
         host: plan.host.clone(),
         port: plan.port,
         username,
         password,
-        command,
+        command: render_remote_command(&plan.remote_command),
         host_key_check,
     };
     let result = execute_ssh_command(&request)
         .map_err(|error| format!("rusplink SSH transport failed: {error}"))?;
+    persist_accepted_host_key(plan, &result.verified_host_key, error_writer)?;
 
     writer
         .write_all(&result.stdout)
@@ -545,6 +630,12 @@ where
         plan.config_path
             .as_ref()
             .map_or_else(|| "-".to_owned(), |path| path.display().to_string())
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        writer,
+        "known_hosts_path={}",
+        plan.known_hosts_path.display()
     )
     .map_err(|error| error.to_string())?;
     writeln!(
@@ -618,6 +709,13 @@ fn resolve_config_path(config_path: Option<PathBuf>) -> Result<PathBuf, String> 
     )
 }
 
+fn resolve_known_hosts_path(known_hosts_path: Option<PathBuf>) -> Result<PathBuf, String> {
+    known_hosts_path.map_or_else(
+        || default_known_hosts_path().map_err(|error| error.to_string()),
+        Ok,
+    )
+}
+
 fn resolve_execution_username(requested_username: Option<&str>) -> Result<String, String> {
     if let Some(requested_username) = requested_username {
         return Ok(requested_username.to_owned());
@@ -651,17 +749,78 @@ fn resolve_host_key_check(plan: &ConnectionPlan) -> Result<HostKeyCheck, String>
         return Ok(HostKeyCheck::AcceptAny);
     }
 
-    let policy_message = match plan.host_key_policy {
-        HostKeyPolicy::Ask => "interactive host-key confirmation is not implemented yet",
-        HostKeyPolicy::Strict => "strict host-key verification is not implemented yet",
-        HostKeyPolicy::AcceptNew => {
-            "known-host persistence for accept-new host keys is not implemented yet"
-        }
-    };
+    let known_host_keys = load_known_host_keys(&plan.known_hosts_path, &plan.host, plan.port)
+        .map_err(|error| error.to_string())?;
+    let trusted_keys = known_host_keys
+        .into_iter()
+        .map(|known_host| known_host.public_key)
+        .collect::<Vec<_>>();
 
-    Err(format!(
-        "{policy_message}; rerun with --dry-run or --unsafe-accept-host-key"
-    ))
+    if !trusted_keys.is_empty() {
+        return Ok(HostKeyCheck::RequireMatch(trusted_keys));
+    }
+
+    match plan.host_key_policy {
+        HostKeyPolicy::Ask => Err(format!(
+            "interactive host-key confirmation is not implemented yet and no trusted key was found in {}; rerun with --dry-run or --unsafe-accept-host-key",
+            plan.known_hosts_path.display()
+        )),
+        HostKeyPolicy::Strict => Err(format!(
+            "strict host-key verification requires a trusted key in {}; rerun with --dry-run or --unsafe-accept-host-key",
+            plan.known_hosts_path.display()
+        )),
+        HostKeyPolicy::AcceptNew => Ok(HostKeyCheck::TrustOnFirstUse),
+    }
+}
+
+fn resolve_term_type() -> String {
+    env::var("TERM")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "xterm-256color".to_owned())
+}
+
+fn resolve_terminal_size() -> Result<TerminalSize, String> {
+    TerminalSize::from_current_terminal().map_err(|error| {
+        format!("cannot determine local terminal size for interactive SSH shell: {error}")
+    })
+}
+
+fn persist_accepted_host_key<E>(
+    plan: &ConnectionPlan,
+    verified_host_key: &VerifiedHostKey,
+    error_writer: &mut E,
+) -> Result<(), String>
+where
+    E: Write,
+{
+    if plan.unsafe_accept_host_key
+        || plan.host_key_policy != HostKeyPolicy::AcceptNew
+        || verified_host_key.source != VerifiedHostKeySource::TrustOnFirstUse
+    {
+        return Ok(());
+    }
+
+    let persist_result = persist_known_host_key(
+        &plan.known_hosts_path,
+        &plan.host,
+        plan.port,
+        &verified_host_key.public_key,
+    )
+    .map_err(|error| error.to_string())?;
+
+    if persist_result.changed {
+        writeln!(
+            error_writer,
+            "rusplink: trusted new host key for {}:{} and saved it to {}",
+            plan.host,
+            plan.port,
+            persist_result.path.display()
+        )
+        .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
 }
 
 fn parse_direct_target(input: &str) -> Result<DirectTarget, String> {
@@ -779,8 +938,10 @@ fn render_host_key_policy(policy: HostKeyPolicy) -> &'static str {
 fn render_transport_host_key_check(plan: &ConnectionPlan) -> &'static str {
     if plan.unsafe_accept_host_key {
         "unsafe_accept_any"
+    } else if plan.host_key_policy == HostKeyPolicy::AcceptNew {
+        "known_hosts_or_accept_new"
     } else {
-        "requires_confirmation"
+        "known_hosts_required"
     }
 }
 
@@ -833,7 +994,7 @@ mod tests {
     use rustty_core::{Protocol, SessionConfig};
 
     use super::{Command, DEFAULT_PASSWORD_ENV, DirectTarget, PlanRequest, RunOutcome, run};
-    use crate::{InvocationTarget, parse_command, render_remote_command};
+    use crate::{InvocationTarget, parse_command, render_remote_command, resolve_host_key_check};
 
     #[test]
     fn defaults_to_help_when_no_arguments_are_supplied() {
@@ -861,6 +1022,8 @@ mod tests {
                 "production".to_owned(),
                 "--config".to_owned(),
                 "/tmp/rustty.toml".to_owned(),
+                "--known-hosts".to_owned(),
+                "/tmp/known_hosts".to_owned(),
                 "--username".to_owned(),
                 "ops".to_owned(),
                 "--password-env".to_owned(),
@@ -875,6 +1038,7 @@ mod tests {
             ]),
             Ok(Command::Plan(PlanRequest {
                 config_path: Some(PathBuf::from("/tmp/rustty.toml")),
+                known_hosts_path: Some(PathBuf::from("/tmp/known_hosts")),
                 target: InvocationTarget::Session("production".to_owned()),
                 port_override: Some(2222),
                 dry_run: true,
@@ -887,11 +1051,23 @@ mod tests {
     }
 
     #[test]
+    fn rejects_combining_default_path_flags() {
+        let error = parse_command([
+            "--show-default-config-path".to_owned(),
+            "--show-default-known-hosts-path".to_owned(),
+        ])
+        .expect_err("default path flags should stay mutually exclusive");
+
+        assert!(error.contains("--show-default-config-path"));
+    }
+
+    #[test]
     fn parses_direct_target_with_bracketed_ipv6_host() {
         assert_eq!(
             parse_command(["ops@[2001:db8::1]:2200".to_owned(), "--dry-run".to_owned(),]),
             Ok(Command::Plan(PlanRequest {
                 config_path: None,
+                known_hosts_path: None,
                 target: InvocationTarget::Direct(DirectTarget {
                     username: Some("ops".to_owned()),
                     host: "2001:db8::1".to_owned(),
@@ -959,6 +1135,7 @@ mod tests {
     #[test]
     fn dry_run_session_prints_resolved_plan() {
         let config_path = write_config(AppConfig::sample());
+        let known_hosts_path = temporary_workspace().join("known_hosts");
         let mut output = Vec::new();
         let mut error_output = Vec::new();
 
@@ -968,6 +1145,8 @@ mod tests {
                 "example-ssh".to_owned(),
                 "--config".to_owned(),
                 config_path.display().to_string(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
                 "--username".to_owned(),
                 "ops".to_owned(),
                 "--password-env".to_owned(),
@@ -988,6 +1167,7 @@ mod tests {
         assert!(output.contains("session_name=example-ssh"));
         assert!(output.contains("host=example.com"));
         assert!(output.contains("port=22"));
+        assert!(output.contains(&format!("known_hosts_path={}", known_hosts_path.display())));
         assert!(output.contains("username=ops"));
         assert!(output.contains("password_env=RUSTTY_TEST_PASSWORD"));
         assert!(output.contains("transport_host_key_check=unsafe_accept_any"));
@@ -998,12 +1178,15 @@ mod tests {
 
     #[test]
     fn direct_target_dry_run_prints_username_and_port() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
         let mut output = Vec::new();
         let mut error_output = Vec::new();
 
         let outcome = run(
             [
                 "ops@[2001:db8::10]:2222".to_owned(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
                 "--password-env".to_owned(),
                 "RUSTTY_TEST_PASSWORD".to_owned(),
                 "--dry-run".to_owned(),
@@ -1021,6 +1204,7 @@ mod tests {
         assert!(output.contains("username=ops"));
         assert!(output.contains("host=2001:db8::10"));
         assert!(output.contains("port=2222"));
+        assert!(output.contains(&format!("known_hosts_path={}", known_hosts_path.display())));
         assert!(output.contains("password_env=RUSTTY_TEST_PASSWORD"));
         assert!(output.contains("command=uptime"));
         assert!(error_output.is_empty());
@@ -1053,9 +1237,12 @@ mod tests {
 
     #[test]
     fn live_execution_requires_explicit_host_key_override_for_bootstrap() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
         let error = run(
             [
                 "ops@example.com".to_owned(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
                 "--".to_owned(),
                 "uptime".to_owned(),
             ],
@@ -1068,18 +1255,59 @@ mod tests {
     }
 
     #[test]
-    fn live_execution_rejects_missing_command() {
+    fn interactive_shell_requires_trusted_host_key_when_policy_is_ask() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
         let error = run(
             [
                 "ops@example.com".to_owned(),
-                "--unsafe-accept-host-key".to_owned(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
             ],
             &mut Vec::new(),
             &mut Vec::new(),
         )
-        .expect_err("interactive shells should stay disabled");
+        .expect_err("interactive shells should require host-key trust before connecting");
 
-        assert!(error.contains("interactive SSH shells are not implemented yet"));
+        assert!(error.contains("interactive host-key confirmation is not implemented yet"));
+        assert!(error.contains("known_hosts"));
+    }
+
+    #[test]
+    fn resolve_host_key_check_uses_known_hosts_matches() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        std::fs::write(
+            &known_hosts_path,
+            "example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti\n",
+        )
+        .expect("known-hosts file should be written");
+
+        let plan = super::ConnectionPlan {
+            origin: super::PlanOrigin::Direct,
+            config_path: None,
+            known_hosts_path,
+            session_name: None,
+            protocol: Protocol::Ssh,
+            username: Some("ops".to_owned()),
+            host: "example.com".to_owned(),
+            port: 22,
+            remote_command: vec!["uptime".to_owned()],
+            host_key_policy: rustty_core::HostKeyPolicy::Ask,
+            port_forwards: Vec::new(),
+            saved_in: None,
+            imported_from: None,
+            password_env_var: DEFAULT_PASSWORD_ENV.to_owned(),
+            unsafe_accept_host_key: false,
+        };
+
+        let host_key_check =
+            resolve_host_key_check(&plan).expect("stored host key should allow the connection");
+        match host_key_check {
+            rustty_transport::HostKeyCheck::RequireMatch(keys) => assert_eq!(keys.len(), 1),
+            rustty_transport::HostKeyCheck::AcceptAny
+            | rustty_transport::HostKeyCheck::TrustOnFirstUse => {
+                panic!("expected stored known-host verification")
+            }
+        }
     }
 
     fn write_config(config: AppConfig) -> PathBuf {

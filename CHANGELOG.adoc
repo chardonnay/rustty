@@ -38,6 +38,17 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added bootstrap `rusplink` transport support for password-authenticated SSH
   command execution with explicit, unsafe host-key override handling.
 
+[#suite-rusplink-known-hosts-shell]
+=== rusplink host keys and shells
+
+* Added a RusTTY-managed OpenSSH-style known-host store with default-path
+  resolution and append-only persistence for exact host or `host:port`
+  entries.
+* Added `rusplink` host-key verification against stored known-host entries and
+  automatic persistence for `accept_new` sessions.
+* Added interactive SSH shell support with remote PTY allocation when
+  `rusplink` runs without a remote command.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

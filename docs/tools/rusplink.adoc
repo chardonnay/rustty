@@ -12,17 +12,19 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 == Bootstrap Capability Profile
 
 * default-config path discovery
+* default known-hosts path discovery
 * listing stored RusTTY sessions
 * session-backed SSH invocation planning
 * direct-target SSH invocation planning
 * password-authenticated SSH exec transport for remote commands
+* interactive SSH shell transport with remote PTY allocation
+* OpenSSH-style known-host lookup and append-only persistence
 * remote-command capture after `--`
 * compatibility-oriented reuse of imported PuTTY session metadata
 
 == Planned Capability Profile
 
 * SSH command execution
-* interactive terminal SSH sessions
 * local, remote, and dynamic port forwarding
 * richer session and authentication settings
 * compatibility-oriented import of legacy PuTTY sessions
@@ -32,16 +34,20 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 The bootstrap CLI is already scriptable and explicit:
 
 * `--show-default-config-path` prints RusTTY's platform-resolved config path.
+* `--show-default-known-hosts-path` prints the default OpenSSH-style host-key
+  store path used by RusTTY.
 * `--list-sessions` prints the validated session table from a RusTTY config.
 * `--session NAME --dry-run` resolves a stored SSH session into a connection
   plan.
 * `TARGET --dry-run` resolves a direct SSH target into the same plan format.
 * `TARGET -- COMMAND...` or `--session NAME -- COMMAND...` executes a remote
   SSH command over the new bootstrap transport layer.
+* `TARGET` or `--session NAME` without a command opens an interactive SSH shell
+  with a requested remote PTY.
 
-Live transport currently targets remote command execution, not interactive
-shells. Passwords are read from an environment variable and host keys require
-an explicit bootstrap override flag.
+Live transport already supports both remote command execution and interactive
+shells. Passwords are read from an environment variable, and host keys are
+resolved through RusTTY's explicit known-hosts flow.
 
 == Configuration and Storage
 
@@ -50,6 +56,10 @@ from the default config path or an explicit `--config PATH`.
 
 Imported PuTTY sessions remain migration inputs, not the ongoing write target,
 but their provenance is surfaced in dry-run output and session listings.
+
+Host keys live in a separate OpenSSH-style `known_hosts` file that defaults to
+the same RusTTY-owned config base directory. `rusplink` can use the platform
+default location or an explicit `--known-hosts PATH`.
 
 == Authentication and Host Keys
 
@@ -64,23 +74,37 @@ The bootstrap transport currently supports password authentication only.
 Host-key confirmation and persistence are intentionally conservative during the
 bootstrap phase:
 
-* `ask`, `accept_new`, and `strict` policies are visible in dry-run output.
-* live execution currently requires `--unsafe-accept-host-key`.
-* no known-host database is written yet, so the override is explicitly marked
-  unsafe and should only be used for disposable/bootstrap testing.
+Host-key handling now follows the RusTTY session policy plus the local
+known-hosts file:
+
+* `--known-hosts PATH` overrides the host-key database location for the
+  current invocation.
+* `strict` requires at least one exact stored key match for the resolved host
+  and port.
+* `ask` also accepts stored exact matches, but still errors for unknown hosts
+  because interactive confirmation is not implemented yet.
+* `accept_new` accepts a first-seen host key and persists it to the
+  known-hosts file after a successful bootstrap session.
+* `--unsafe-accept-host-key` still bypasses verification for disposable
+  testing, but it does not persist trust.
+
+The current bootstrap lookup intentionally matches exact host and `host:port`
+entries that RusTTY writes itself. Wildcards, negations, markers, and hashed
+hostnames are preserved on disk but are not used as trust matches yet.
 
 == Logging and Diagnostics
 
 The current bootstrap output is line-oriented and script-friendly. Dry-run
-plans expose origin, host, port, command, password source, host-key policy,
-transport host-key mode, storage origin, and port-forward metadata.
+plans expose origin, config path, known-hosts path, host, port, command,
+password source, host-key policy, transport host-key mode, storage origin, and
+port-forward metadata.
 
 == Compatibility Notes
 
 The current bootstrap CLI uses long-form Rust-style flags such as `--session`,
-`--config`, `--dry-run`, `--password-env`, and
+`--config`, `--known-hosts`, `--dry-run`, `--password-env`, and
 `--unsafe-accept-host-key`. It does not yet provide PuTTY-compatible short
-flags such as `-load`, interactive shells, or known-host persistence.
+flags such as `-load`.
 
 Any user-visible divergence from `plink` must continue to be documented in
 changelogs and release notes.
@@ -90,6 +114,11 @@ changelogs and release notes.
 [source,text]
 ----
 rusplink --show-default-config-path
+----
+
+[source,text]
+----
+rusplink --show-default-known-hosts-path
 ----
 
 [source,text]
@@ -104,12 +133,12 @@ rusplink --session production --dry-run -- uname -a
 
 [source,text]
 ----
-rusplink ops@[2001:db8::10]:2222 --dry-run -- uptime
+rusplink ops@[2001:db8::10]:2222 --known-hosts /tmp/rustty-known_hosts --dry-run -- uptime
 ----
 
 [source,text]
 ----
-RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --unsafe-accept-host-key -- uptime
+RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --known-hosts /tmp/rustty-known_hosts --unsafe-accept-host-key
 ----
 
 [source,text]
@@ -123,10 +152,13 @@ Current bootstrap limits include:
 
 * only SSH sessions can be resolved by `rusplink`
 * `--config` is only used for `--session` and `--list-sessions`
-* live execution supports remote `exec` requests only, not interactive shells
 * only password authentication is implemented in the bootstrap transport
-* host-key confirmation and persistence are not implemented yet, so live
-  execution requires `--unsafe-accept-host-key`
+* `ask` still lacks an interactive prompt for unknown hosts, so it requires a
+  pre-trusted exact known-host entry for live execution
+* known-host matching is intentionally conservative and currently ignores
+  wildcard, negated, marked, or hashed host patterns
+* remote commands run through SSH `exec`; PTY-backed interactive shells are
+  available only when no remote command is supplied
 * direct targets support `host`, `user@host`, `host:port`, and
   `[ipv6-host]:port`, but not the full future flag surface of `plink`
 

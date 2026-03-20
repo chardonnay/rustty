@@ -2,6 +2,18 @@
 
 == Unreleased
 
+[#rusplink-known-hosts-shell]
+=== Known-host persistence and interactive shells
+
+* Added `--show-default-known-hosts-path` and `--known-hosts PATH` so
+  `rusplink` can inspect and override the RusTTY-managed host-key store.
+* Added exact-match OpenSSH-style known-host lookup and append-only persistence
+  for `accept_new` SSH sessions.
+* Added interactive SSH shell support with remote PTY allocation when no
+  remote command is supplied.
+* Continued to keep `ask` conservative for unknown hosts: stored host keys are
+  accepted, but interactive trust prompts remain intentionally unimplemented.
+
 [#rusplink-ssh-exec-transport]
 === SSH exec transport
 
@@ -9,9 +21,8 @@
   remote SSH `exec` requests when a command is supplied after `--`.
 * Added `--username`, `--password-env`, and `--unsafe-accept-host-key` for the
   current bootstrap transport flow.
-* Limited live transport to password authentication and remote command
-  execution for now; interactive shells and known-host persistence remain
-  intentionally unimplemented.
+* Limited live transport to password authentication in the current bootstrap
+  slice.
 
 [#rusplink-dry-run-cli]
 === Session lookup and dry-run planning

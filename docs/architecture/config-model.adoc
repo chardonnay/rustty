@@ -11,6 +11,8 @@ only as an import source.
 * Keep tool metadata close to the Rust workspace so documentation and runtime
   stay aligned.
 * Make it easy to print, inspect, and test sample configuration.
+* Keep SSH trust state in a RusTTY-owned known-hosts file instead of relying
+  on unsafe one-off overrides.
 
 == Bootstrap Schema
 
@@ -59,3 +61,17 @@ config schema and on-disk validation path.
 
 The same config schema can now also be consumed by `rusplink` for session
 listing and SSH dry-run planning.
+
+== Known-Hosts Path Policy
+
+RusTTY resolves the SSH known-hosts file in the same platform-specific base
+directory as `config.toml`:
+
+* Windows: `%APPDATA%/RusTTY/known_hosts`
+* macOS: `~/Library/Application Support/RusTTY/known_hosts`
+* Unix-like systems: `$XDG_CONFIG_HOME/rustty/known_hosts` when available,
+  otherwise `~/.config/rustty/known_hosts`
+
+The current bootstrap persistence intentionally appends new exact host or
+`[host]:port` entries and preserves unrelated lines already present in the
+file.

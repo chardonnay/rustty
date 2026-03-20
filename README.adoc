@@ -78,8 +78,8 @@ The workspace currently provides:
 
 * a Rust workspace with shared core, transport, and UI crates,
 * a config bootstrap flow in `rustty`,
-* a session-aware `rusplink` CLI with dry-run planning and bootstrap SSH exec
-  transport,
+* a session-aware `rusplink` CLI with dry-run planning, bootstrap SSH exec
+  transport, known-host persistence, and interactive shell support,
 * placeholder binaries for the remaining planned tools,
 * an `xtask` utility that verifies documentation and release-note link
   integrity, and
@@ -99,8 +99,9 @@ cargo run -p rustty -- --show-default-config-path
 cargo run -p rustty -- --init-config
 cargo run -p rustty -- --validate-config
 cargo run -p rusplink -- --list-sessions
+cargo run -p rusplink -- --show-default-known-hosts-path
 cargo run -p rusplink -- --session example-ssh --dry-run -- hostname
-cargo run -p rusplink -- example.com --dry-run -- uptime
+cargo run -p rusplink -- example.com --known-hosts /tmp/rustty-known_hosts --dry-run -- uptime
 RUSTTY_SSH_PASSWORD=secret cargo run -p rusplink -- ops@example.com --unsafe-accept-host-key -- uptime
 ----
 

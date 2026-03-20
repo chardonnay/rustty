@@ -28,9 +28,13 @@
 * `rusplink` can now execute remote SSH commands with password authentication
   sourced from an environment variable.
   xref:../changelogs/rusplink.adoc#rusplink-ssh-exec-transport[Changelog entry]
-* Live SSH execution currently requires an explicit unsafe host-key override
-  and still does not provide interactive shells or known-host persistence.
-  xref:../changelogs/rusplink.adoc#rusplink-ssh-exec-transport[Changelog entry]
+* `rusplink` can now resolve a default known-hosts path, verify exact stored
+  host keys, persist first-seen keys for `accept_new`, and open interactive
+  SSH shells with a remote PTY.
+  xref:../changelogs/rusplink.adoc#rusplink-known-hosts-shell[Changelog entry]
+* `ask` host-key policy remains conservative for unknown hosts and still does
+  not offer an interactive trust prompt.
+  xref:../changelogs/rusplink.adoc#rusplink-known-hosts-shell[Changelog entry]
 
 === Developer workflow
 

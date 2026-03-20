@@ -11,8 +11,10 @@
 == Crates
 
 * `crates/rustty-core` contains product metadata and shared domain types.
-* `crates/rustty-config` contains the RusTTY config schema and TOML helpers.
-* `crates/rustty-transport` contains reusable transport-layer helpers.
+* `crates/rustty-config` contains the RusTTY config schema, path helpers, and
+  known-host persistence.
+* `crates/rustty-transport` contains reusable transport-layer helpers for SSH
+  exec and interactive shell sessions.
 * `crates/rustty-ui` contains shared GUI-facing bootstrap logic.
 
 == Applications

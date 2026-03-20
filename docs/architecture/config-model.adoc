@@ -32,3 +32,24 @@ cargo run -p rustty -- --print-sample-config
 ----
 
 This sample is intended to give future import and storage work a stable target.
+
+== Default Config Path Policy
+
+RusTTY resolves the default config file by platform:
+
+* Windows: `%APPDATA%/RusTTY/config.toml`
+* macOS: `~/Library/Application Support/RusTTY/config.toml`
+* Unix-like systems: `$XDG_CONFIG_HOME/rustty/config.toml` when available,
+  otherwise `~/.config/rustty/config.toml`
+
+== Bootstrap CLI Operations
+
+The current `rustty` bootstrap binary supports:
+
+* `--print-sample-config`
+* `--show-default-config-path`
+* `--init-config [PATH]`
+* `--validate-config [PATH]`
+
+These flows are intentionally small but already exercise the versioned RusTTY
+config schema and on-disk validation path.

@@ -8,6 +8,16 @@
 * Added `--print-sample-config` to expose the current RusTTY TOML schema from
   the `rustty` bootstrap binary.
 
+[#rustty-config-cli]
+=== Config path and validation commands
+
+* Added `--show-default-config-path` to print RusTTY's platform-resolved config
+  location.
+* Added `--init-config` to create a sample config file without overwriting a
+  valid existing file.
+* Added `--validate-config` to parse and validate a RusTTY config file before
+  later runtime use.
+
 [#rustty-bootstrap-repo]
 === Bootstrap repository
 

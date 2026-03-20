@@ -7,6 +7,12 @@
 
 * `rustty` can now print a sample RusTTY configuration for schema review.
   xref:../changelogs/rustty.adoc#rustty-sample-config[Changelog entry]
+* `rustty` can now show the default config path, initialize a sample config
+  file, and validate an existing RusTTY config.
+  xref:../changelogs/rustty.adoc#rustty-config-cli[Changelog entry]
+* The RusTTY config layer now includes default-path resolution and validated
+  file persistence helpers.
+  xref:../../CHANGELOG.adoc#suite-config-cli[Changelog entry]
 
 === Developer workflow
 

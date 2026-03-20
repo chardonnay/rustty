@@ -92,6 +92,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p xtask -- ci
 cargo run -p rustty -- --print-sample-config
+cargo run -p rustty -- --show-default-config-path
+cargo run -p rustty -- --init-config
+cargo run -p rustty -- --validate-config
 ----
 
 == Licensing

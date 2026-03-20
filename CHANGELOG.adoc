@@ -15,6 +15,14 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added branch-name enforcement and AsciiDoc policy checks to repository
   automation.
 
+[#suite-config-cli]
+=== Config CLI workflows
+
+* Added default-path resolution, file initialization, saving, loading, and
+  validation helpers for RusTTY config files.
+* Added `rustty` CLI entry points for printing the default config path,
+  initializing sample config files, and validating stored config.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

@@ -17,14 +17,21 @@ documentation and release process.
 === `rustty-core`
 
 The shared core crate owns product metadata, tool metadata, and the initial
-session model. Later it will also own transport abstractions, terminal state,
-agent behaviors, importers, and configuration contracts.
+session model. Later it will also own terminal state, agent behaviors,
+importers, and broader configuration contracts.
 
 === `rustty-config`
 
 The configuration crate owns RusTTY's versioned serialized config schema,
 sample-config generation, import provenance types, and TOML encode/decode
 helpers.
+
+=== `rustty-transport`
+
+The transport crate owns reusable network-facing protocol helpers. The current
+bootstrap slice exposes password-authenticated SSH `exec` transport for
+`rusplink`, while keeping host-key and authentication policy decisions explicit
+at the application layer.
 
 === `rustty-ui`
 
@@ -35,8 +42,8 @@ project to a specific widget toolkit yet.
 === Application binaries
 
 Each user-facing tool is a separate binary crate that depends on the shared
-core. This keeps release artifacts compact while still allowing one source of
-truth for docs and behavior metadata.
+workspace crates. This keeps release artifacts compact while still allowing one
+source of truth for docs and behavior metadata.
 
 === `xtask`
 

@@ -25,6 +25,12 @@
 * `rusplink` can now resolve saved SSH sessions and direct SSH targets into a
   stable dry-run connection plan.
   xref:../changelogs/rusplink.adoc#rusplink-dry-run-cli[Changelog entry]
+* `rusplink` can now execute remote SSH commands with password authentication
+  sourced from an environment variable.
+  xref:../changelogs/rusplink.adoc#rusplink-ssh-exec-transport[Changelog entry]
+* Live SSH execution currently requires an explicit unsafe host-key override
+  and still does not provide interactive shells or known-host persistence.
+  xref:../changelogs/rusplink.adoc#rusplink-ssh-exec-transport[Changelog entry]
 
 === Developer workflow
 

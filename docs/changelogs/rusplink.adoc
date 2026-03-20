@@ -2,6 +2,17 @@
 
 == Unreleased
 
+[#rusplink-ssh-exec-transport]
+=== SSH exec transport
+
+* Added a reusable `rustty-transport` crate and wired `rusplink` to execute
+  remote SSH `exec` requests when a command is supplied after `--`.
+* Added `--username`, `--password-env`, and `--unsafe-accept-host-key` for the
+  current bootstrap transport flow.
+* Limited live transport to password authentication and remote command
+  execution for now; interactive shells and known-host persistence remain
+  intentionally unimplemented.
+
 [#rusplink-dry-run-cli]
 === Session lookup and dry-run planning
 

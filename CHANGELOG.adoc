@@ -31,6 +31,13 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added `rusplink` commands for default-path discovery, session listing, and
   SSH dry-run planning from either saved sessions or direct targets.
 
+[#suite-rusplink-ssh-transport]
+=== rusplink SSH transport
+
+* Added a reusable `rustty-transport` crate for SSH exec requests.
+* Added bootstrap `rusplink` transport support for password-authenticated SSH
+  command execution with explicit, unsafe host-key override handling.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

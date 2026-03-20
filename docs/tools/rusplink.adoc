@@ -15,6 +15,7 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 * listing stored RusTTY sessions
 * session-backed SSH invocation planning
 * direct-target SSH invocation planning
+* password-authenticated SSH exec transport for remote commands
 * remote-command capture after `--`
 * compatibility-oriented reuse of imported PuTTY session metadata
 
@@ -35,9 +36,12 @@ The bootstrap CLI is already scriptable and explicit:
 * `--session NAME --dry-run` resolves a stored SSH session into a connection
   plan.
 * `TARGET --dry-run` resolves a direct SSH target into the same plan format.
+* `TARGET -- COMMAND...` or `--session NAME -- COMMAND...` executes a remote
+  SSH command over the new bootstrap transport layer.
 
-Transport execution is not implemented yet, so connection-style invocations
-currently require `--dry-run`.
+Live transport currently targets remote command execution, not interactive
+shells. Passwords are read from an environment variable and host keys require
+an explicit bootstrap override flag.
 
 == Configuration and Storage
 
@@ -47,17 +51,36 @@ from the default config path or an explicit `--config PATH`.
 Imported PuTTY sessions remain migration inputs, not the ongoing write target,
 but their provenance is surfaced in dry-run output and session listings.
 
+== Authentication and Host Keys
+
+The bootstrap transport currently supports password authentication only.
+
+* `--password-env ENV` selects the environment variable that contains the SSH
+  password.
+* Without `--password-env`, `rusplink` reads `RUSTTY_SSH_PASSWORD`.
+* `--username USER` overrides the username for session-backed connections.
+* Direct targets can also supply the username through `user@host`.
+
+Host-key confirmation and persistence are intentionally conservative during the
+bootstrap phase:
+
+* `ask`, `accept_new`, and `strict` policies are visible in dry-run output.
+* live execution currently requires `--unsafe-accept-host-key`.
+* no known-host database is written yet, so the override is explicitly marked
+  unsafe and should only be used for disposable/bootstrap testing.
+
 == Logging and Diagnostics
 
 The current bootstrap output is line-oriented and script-friendly. Dry-run
-plans expose origin, host, port, command, host-key policy, storage origin, and
-port-forward metadata.
+plans expose origin, host, port, command, password source, host-key policy,
+transport host-key mode, storage origin, and port-forward metadata.
 
 == Compatibility Notes
 
 The current bootstrap CLI uses long-form Rust-style flags such as `--session`,
-`--config`, and `--dry-run`. It does not yet provide PuTTY-compatible short
-flags such as `-load` or execute live SSH traffic.
+`--config`, `--dry-run`, `--password-env`, and
+`--unsafe-accept-host-key`. It does not yet provide PuTTY-compatible short
+flags such as `-load`, interactive shells, or known-host persistence.
 
 Any user-visible divergence from `plink` must continue to be documented in
 changelogs and release notes.
@@ -84,14 +107,26 @@ rusplink --session production --dry-run -- uname -a
 rusplink ops@[2001:db8::10]:2222 --dry-run -- uptime
 ----
 
-== Current Limits
+[source,text]
+----
+RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --unsafe-accept-host-key -- uptime
+----
 
-The bootstrap implementation does not yet connect to remote hosts.
+[source,text]
+----
+RUSTTY_SSH_PASSWORD=secret rusplink --session production --username ops --unsafe-accept-host-key -- uname -a
+----
+
+== Current Limits
 
 Current bootstrap limits include:
 
 * only SSH sessions can be resolved by `rusplink`
 * `--config` is only used for `--session` and `--list-sessions`
+* live execution supports remote `exec` requests only, not interactive shells
+* only password authentication is implemented in the bootstrap transport
+* host-key confirmation and persistence are not implemented yet, so live
+  execution requires `--unsafe-accept-host-key`
 * direct targets support `host`, `user@host`, `host:port`, and
   `[ipv6-host]:port`, but not the full future flag surface of `plink`
 

@@ -2,6 +2,18 @@
 
 == Unreleased
 
+[#rusplink-dry-run-cli]
+=== Session lookup and dry-run planning
+
+* Added `--show-default-config-path` and `--list-sessions` to inspect
+  RusTTY-backed `rusplink` configuration.
+* Added `--session NAME --dry-run` to resolve saved SSH sessions into a stable,
+  line-oriented execution plan.
+* Added direct-target dry-run planning for `host`, `user@host`, `host:port`,
+  and bracketed IPv6 target forms.
+* Rejected non-SSH saved sessions at `rusplink` resolution time and tightened
+  config validation so stored session names remain unique.
+
 [#rusplink-bootstrap-repo]
 === Bootstrap repository
 

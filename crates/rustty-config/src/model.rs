@@ -65,6 +65,21 @@ impl AppConfig {
         self.session_store.sessions.len()
     }
 
+    /// Returns the stored sessions in insertion order.
+    #[must_use]
+    pub fn sessions(&self) -> &[StoredSession] {
+        &self.session_store.sessions
+    }
+
+    /// Finds a stored session by name.
+    #[must_use]
+    pub fn find_session(&self, name: &str) -> Option<&StoredSession> {
+        self.session_store
+            .sessions
+            .iter()
+            .find(|stored_session| stored_session.session.name == name)
+    }
+
     /// Returns the number of tool profiles in the config.
     #[must_use]
     pub fn tool_count(&self) -> usize {
@@ -89,13 +104,18 @@ impl AppConfig {
             ));
         }
 
-        if self
-            .session_store
-            .sessions
-            .iter()
-            .any(|stored_session| stored_session.session.name.is_empty())
-        {
-            return Err(ValidationError::EmptySessionName);
+        let mut seen_session_names = BTreeSet::new();
+        for stored_session in &self.session_store.sessions {
+            if stored_session.session.name.is_empty() {
+                return Err(ValidationError::EmptySessionName);
+            }
+
+            let is_new = seen_session_names.insert(stored_session.session.name.clone());
+            if !is_new {
+                return Err(ValidationError::DuplicateSessionName(
+                    stored_session.session.name.clone(),
+                ));
+            }
         }
 
         let mut seen_binary_names = BTreeSet::new();
@@ -212,6 +232,30 @@ mod tests {
         let session = SessionConfig::new("legacy", Protocol::Ssh).with_host("legacy.example");
         let stored = StoredSession::imported(session, ImportSource::PuttyRegistry);
         assert_eq!(stored.imported_from, Some(ImportSource::PuttyRegistry));
+    }
+
+    #[test]
+    fn find_session_returns_matching_entry() {
+        let config = AppConfig::sample();
+        let stored_session = config
+            .find_session("example-ssh")
+            .expect("sample config should contain the example session");
+        assert_eq!(stored_session.session.protocol, Protocol::Ssh);
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_session_names() {
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("example-ssh", Protocol::Telnet).with_host("legacy.example"),
+        ));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::DuplicateSessionName(
+                "example-ssh".to_owned()
+            ))
+        );
     }
 
     #[test]

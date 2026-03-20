@@ -73,6 +73,7 @@ dependencies = [
 name = "rusplink"
 version = "0.1.0"
 dependencies = [
+ "rustty-config",
  "rustty-core",
 ]
 

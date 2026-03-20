@@ -23,6 +23,14 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added `rustty` CLI entry points for printing the default config path,
   initializing sample config files, and validating stored config.
 
+[#suite-rusplink-cli]
+=== rusplink session planning
+
+* Added unique session-name validation so saved config lookups stay stable
+  across CLI tools.
+* Added `rusplink` commands for default-path discovery, session listing, and
+  SSH dry-run planning from either saved sessions or direct targets.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

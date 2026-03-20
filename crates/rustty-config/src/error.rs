@@ -74,6 +74,8 @@ pub enum ValidationError {
     UnexpectedProductName(String),
     /// A session name is missing.
     EmptySessionName,
+    /// Multiple sessions share the same name.
+    DuplicateSessionName(String),
     /// The config repeats a tool profile binary name.
     DuplicateToolBinary(String),
 }
@@ -91,6 +93,9 @@ impl fmt::Display for ValidationError {
                 write!(formatter, "unexpected RusTTY product_name: {name}")
             }
             Self::EmptySessionName => write!(formatter, "RusTTY session names must not be empty"),
+            Self::DuplicateSessionName(session_name) => {
+                write!(formatter, "duplicate RusTTY session name: {session_name}")
+            }
             Self::DuplicateToolBinary(binary_name) => {
                 write!(formatter, "duplicate RusTTY tool profile: {binary_name}")
             }

@@ -13,6 +13,18 @@
 * The RusTTY config layer now includes default-path resolution and validated
   file persistence helpers.
   xref:../../CHANGELOG.adoc#suite-config-cli[Changelog entry]
+* RusTTY config validation now enforces unique session names so tool-level
+  session lookup stays deterministic.
+  xref:../../CHANGELOG.adoc#suite-rusplink-cli[Changelog entry]
+
+=== rusplink
+
+* `rusplink` can now print the default config path and list validated RusTTY
+  sessions from disk.
+  xref:../changelogs/rusplink.adoc#rusplink-dry-run-cli[Changelog entry]
+* `rusplink` can now resolve saved SSH sessions and direct SSH targets into a
+  stable dry-run connection plan.
+  xref:../changelogs/rusplink.adoc#rusplink-dry-run-cli[Changelog entry]
 
 === Developer workflow
 

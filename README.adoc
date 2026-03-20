@@ -77,7 +77,9 @@ In short:
 The workspace currently provides:
 
 * a Rust workspace with shared core and UI crates,
-* placeholder binaries for every planned tool,
+* a config bootstrap flow in `rustty`,
+* a session-aware dry-run planning CLI in `rusplink`,
+* placeholder binaries for the remaining planned tools,
 * an `xtask` utility that verifies documentation and release-note link
   integrity, and
 * complete AsciiDoc manuals, migration notes, changelogs, and release-note
@@ -95,6 +97,9 @@ cargo run -p rustty -- --print-sample-config
 cargo run -p rustty -- --show-default-config-path
 cargo run -p rustty -- --init-config
 cargo run -p rustty -- --validate-config
+cargo run -p rusplink -- --list-sessions
+cargo run -p rusplink -- --session example-ssh --dry-run -- hostname
+cargo run -p rusplink -- example.com --dry-run -- uptime
 ----
 
 == Licensing

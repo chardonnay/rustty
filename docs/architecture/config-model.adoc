@@ -22,6 +22,9 @@ The initial configuration crate models:
 * optional import provenance for migrated sessions, and
 * a per-tool profile list derived from the shared tool metadata table.
 
+Session names are now validated as unique so CLI tools such as `rusplink` can
+load them deterministically by name.
+
 == Sample Configuration
 
 The `rustty` bootstrap binary can print a sample RusTTY TOML file:
@@ -53,3 +56,6 @@ The current `rustty` bootstrap binary supports:
 
 These flows are intentionally small but already exercise the versioned RusTTY
 config schema and on-disk validation path.
+
+The same config schema can now also be consumed by `rusplink` for session
+listing and SSH dry-run planning.

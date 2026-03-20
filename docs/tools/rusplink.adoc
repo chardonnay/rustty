@@ -1,7 +1,7 @@
 = rusplink Manual
 :toc:
 
-`rusplink` is the planned command-line remote execution and SSH client for
+`rusplink` is the command-line remote execution and SSH planning client for
 RusTTY. It replaces PuTTY's `plink`.
 
 == Purpose
@@ -9,51 +9,94 @@ RusTTY. It replaces PuTTY's `plink`.
 `rusplink` is intended for scripting, automation, remote command execution,
 port forwarding, and non-GUI access to the RusTTY connection stack.
 
+== Bootstrap Capability Profile
+
+* default-config path discovery
+* listing stored RusTTY sessions
+* session-backed SSH invocation planning
+* direct-target SSH invocation planning
+* remote-command capture after `--`
+* compatibility-oriented reuse of imported PuTTY session metadata
+
 == Planned Capability Profile
 
 * SSH command execution
 * interactive terminal SSH sessions
 * local, remote, and dynamic port forwarding
-* session loading from RusTTY configuration
+* richer session and authentication settings
 * compatibility-oriented import of legacy PuTTY sessions
 
 == Usage Model
 
-The bootstrap binary currently prints an implementation placeholder and points
-to this manual. The future CLI should remain scriptable, stable, and explicit.
+The bootstrap CLI is already scriptable and explicit:
+
+* `--show-default-config-path` prints RusTTY's platform-resolved config path.
+* `--list-sessions` prints the validated session table from a RusTTY config.
+* `--session NAME --dry-run` resolves a stored SSH session into a connection
+  plan.
+* `TARGET --dry-run` resolves a direct SSH target into the same plan format.
+
+Transport execution is not implemented yet, so connection-style invocations
+currently require `--dry-run`.
 
 == Configuration and Storage
 
-`rusplink` should accept explicit flags as well as RusTTY session references.
-Imported PuTTY sessions are migration inputs, not the ongoing write target.
+`rusplink` accepts RusTTY session references through `--session` and loads them
+from the default config path or an explicit `--config PATH`.
+
+Imported PuTTY sessions remain migration inputs, not the ongoing write target,
+but their provenance is surfaced in dry-run output and session listings.
 
 == Logging and Diagnostics
 
-The CLI should provide structured diagnostics for authentication failures, host
-key decisions, and port-forwarding setup issues.
+The current bootstrap output is line-oriented and script-friendly. Dry-run
+plans expose origin, host, port, command, host-key policy, storage origin, and
+port-forward metadata.
 
 == Compatibility Notes
 
-Flag naming may diverge where a clearer Rust-native interface is worthwhile,
-but any user-visible break from `plink` must be documented.
+The current bootstrap CLI uses long-form Rust-style flags such as `--session`,
+`--config`, and `--dry-run`. It does not yet provide PuTTY-compatible short
+flags such as `-load` or execute live SSH traffic.
+
+Any user-visible divergence from `plink` must continue to be documented in
+changelogs and release notes.
 
 == Examples
 
 [source,text]
 ----
-rusplink user@example.com
+rusplink --show-default-config-path
 ----
 
 [source,text]
 ----
-rusplink --session production -- command --flag
+rusplink --list-sessions --config /path/to/config.toml
+----
+
+[source,text]
+----
+rusplink --session production --dry-run -- uname -a
+----
+
+[source,text]
+----
+rusplink ops@[2001:db8::10]:2222 --dry-run -- uptime
 ----
 
 == Current Limits
 
 The bootstrap implementation does not yet connect to remote hosts.
 
+Current bootstrap limits include:
+
+* only SSH sessions can be resolved by `rusplink`
+* `--config` is only used for `--session` and `--list-sessions`
+* direct targets support `host`, `user@host`, `host:port`, and
+  `[ipv6-host]:port`, but not the full future flag surface of `plink`
+
 == Related Docs
 
+* xref:../architecture/config-model.adoc[Configuration Model]
 * xref:../migration/session-import.adoc[Session Import]
 * xref:../changelogs/rusplink.adoc[rusplink Changelog]

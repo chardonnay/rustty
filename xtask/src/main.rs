@@ -10,11 +10,13 @@ use rustty_core::{ALL_TOOLS, NEXT_RELEASE_NOTES_PATH, SUITE_CHANGELOG_PATH};
 
 const REQUIRED_FILES: &[&str] = &[
     "README.adoc",
+    "CONTRIBUTING.adoc",
     "NOTICE.adoc",
     "LICENSE",
     "CHANGELOG.adoc",
     "docs/index.adoc",
     "docs/architecture/overview.adoc",
+    "docs/architecture/config-model.adoc",
     "docs/architecture/repository-workflow.adoc",
     "docs/architecture/release-process.adoc",
     "docs/architecture/workspace-layout.adoc",
@@ -24,6 +26,7 @@ const REQUIRED_FILES: &[&str] = &[
     "docs/legal/licensing.adoc",
     "docs/release-notes/next.adoc",
     "docs/release-notes/0.1.0.adoc",
+    ".github/CODEOWNERS",
     ".github/workflows/ci.yml",
 ];
 
@@ -43,10 +46,21 @@ fn run() -> Result<(), String> {
         "ci" | "check-docs" => {
             check_required_files()?;
             check_tool_coverage()?;
+            check_doc_extension_policy()?;
             check_xref_targets()?;
             check_release_note_links()?;
+            if let Ok(branch_name) = env::var("RUSTTY_BRANCH_NAME") {
+                check_branch_name(&branch_name)?;
+            }
             println!("RusTTY repository checks passed.");
             Ok(())
+        }
+        "check-branch" => {
+            let branch_name = env::args()
+                .nth(2)
+                .or_else(|| env::var("RUSTTY_BRANCH_NAME").ok())
+                .ok_or_else(|| "check-branch requires a branch name".to_owned())?;
+            check_branch_name(&branch_name)
         }
         other => Err(format!("unsupported xtask command: {other}")),
     }
@@ -113,6 +127,28 @@ fn check_xref_targets() -> Result<(), String> {
     Ok(())
 }
 
+fn check_doc_extension_policy() -> Result<(), String> {
+    for forbidden in ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "NOTICE.md"] {
+        if Path::new(forbidden).exists() {
+            return Err(format!(
+                "human-facing project docs must use AsciiDoc, found forbidden file: {forbidden}"
+            ));
+        }
+    }
+
+    if let Some(file) = gather_files_with_extension(Path::new("docs"), OsStr::new("md"))?
+        .into_iter()
+        .next()
+    {
+        return Err(format!(
+            "human-facing docs under docs/ must use AsciiDoc, found: {}",
+            file.display()
+        ));
+    }
+
+    Ok(())
+}
+
 fn check_release_note_links() -> Result<(), String> {
     let release_note_paths = [
         Path::new("docs/release-notes/next.adoc"),
@@ -168,9 +204,56 @@ fn check_release_note_links() -> Result<(), String> {
     Ok(())
 }
 
+fn check_branch_name(branch_name: &str) -> Result<(), String> {
+    if branch_name == "main" {
+        return Ok(());
+    }
+
+    let Some((prefix, remainder)) = branch_name.split_once('/') else {
+        return Err(format!(
+            "invalid branch name '{branch_name}': missing category prefix"
+        ));
+    };
+
+    let allowed_prefix = matches!(
+        prefix,
+        "feat" | "fix" | "docs" | "chore" | "release" | "hotfix"
+    );
+    if !allowed_prefix {
+        return Err(format!(
+            "invalid branch name '{branch_name}': unsupported prefix '{prefix}'"
+        ));
+    }
+
+    if remainder.is_empty() {
+        return Err(format!(
+            "invalid branch name '{branch_name}': missing descriptive suffix"
+        ));
+    }
+
+    if !remainder.chars().all(|character| {
+        character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || matches!(character, '-' | '/' | '.')
+    }) {
+        return Err(format!(
+            "invalid branch name '{branch_name}': only lowercase letters, digits, '.', '/', and '-' are allowed"
+        ));
+    }
+
+    Ok(())
+}
+
 fn gather_adoc_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files = Vec::new();
     gather_adoc_files_inner(root, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn gather_files_with_extension(root: &Path, extension: &OsStr) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    gather_files_with_extension_inner(root, extension, &mut files)?;
     files.sort();
     Ok(files)
 }
@@ -189,6 +272,28 @@ fn gather_adoc_files_inner(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), 
         if path.is_dir() {
             gather_adoc_files_inner(&path, files)?;
         } else if path.extension() == Some(OsStr::new("adoc")) {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn gather_files_with_extension_inner(
+    root: &Path,
+    extension: &OsStr,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    if !root.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(root).map_err(|error| format!("{}: {error}", root.display()))? {
+        let entry = entry.map_err(|error| format!("{}: {error}", root.display()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            gather_files_with_extension_inner(&path, extension, files)?;
+        } else if path.extension() == Some(extension) {
             files.push(path);
         }
     }

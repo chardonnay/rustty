@@ -1,0 +1,42 @@
+= Contributing to RusTTY
+:toc:
+
+Thank you for contributing to RusTTY.
+
+== Ground Rules
+
+* Always work on a branch. Direct work on `main` is not allowed.
+* Use the repository naming conventions documented in
+  xref:docs/architecture/repository-workflow.adoc[Repository Workflow].
+* Every behavior change must update the relevant manual, changelog, and draft
+  release notes in the same branch.
+* Keep human-facing project docs in AsciiDoc.
+
+== Branch Naming
+
+Accepted branch shapes:
+
+* `feat/<area>-<short-name>`
+* `fix/<area>-<short-name>`
+* `docs/<area>-<short-name>`
+* `chore/<area>-<short-name>`
+* `release/<version>`
+* `hotfix/<version>-<short-name>`
+* `main`
+
+== Before Opening a Pull Request
+
+. Run `cargo fmt --all --check`.
+. Run `cargo clippy --workspace --all-targets -- -D warnings`.
+. Run `cargo test --workspace`.
+. Run `cargo run -p xtask -- ci`.
+. Make sure release-note entries link to the right changelog anchors.
+
+== Documentation Discipline
+
+At minimum, user-facing changes must update:
+
+* the tool manual in `docs/tools/`,
+* the relevant per-tool changelog in `docs/changelogs/`,
+* `CHANGELOG.adoc` if the change matters at suite level, and
+* `docs/release-notes/next.adoc`.

@@ -2,6 +2,12 @@
 
 == Unreleased
 
+[#rustty-sample-config]
+=== Sample config output
+
+* Added `--print-sample-config` to expose the current RusTTY TOML schema from
+  the `rustty` bootstrap binary.
+
 [#rustty-bootstrap-repo]
 === Bootstrap repository
 

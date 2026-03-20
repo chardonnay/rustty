@@ -1,0 +1,168 @@
+//! Versioned RusTTY configuration schema and TOML helpers.
+
+use rustty_core::{
+    PRODUCT_NAME, SessionConfig, StorageFormat, ToolSpec, session::Protocol, tools::ALL_TOOLS,
+};
+use serde::{Deserialize, Serialize};
+
+/// The current RusTTY config schema version.
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+/// The top-level RusTTY configuration model.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AppConfig {
+    /// Serialized schema version.
+    pub schema_version: u32,
+    /// Product name for the config file.
+    pub product_name: String,
+    /// Persisted session data.
+    pub session_store: SessionStore,
+    /// Tool metadata mirrored into the config for discoverability.
+    pub tool_profiles: Vec<ToolProfile>,
+}
+
+impl AppConfig {
+    /// Builds a sample configuration document for bootstrap review.
+    #[must_use]
+    pub fn sample() -> Self {
+        let sample_session = SessionConfig::new("example-ssh", Protocol::Ssh)
+            .with_host("example.com")
+            .with_port(22);
+
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            product_name: PRODUCT_NAME.to_owned(),
+            session_store: SessionStore {
+                default_format: StorageFormat::Rustty,
+                sessions: vec![StoredSession::new(sample_session)],
+            },
+            tool_profiles: ALL_TOOLS.into_iter().map(ToolProfile::from).collect(),
+        }
+    }
+
+    /// Adds a stored session to the configuration.
+    pub fn add_session(&mut self, stored_session: StoredSession) {
+        self.session_store.sessions.push(stored_session);
+    }
+
+    /// Parses a RusTTY config from TOML.
+    pub fn from_toml_str(input: &str) -> Result<Self, toml::de::Error> {
+        toml::from_str(input)
+    }
+
+    /// Renders a RusTTY config as pretty TOML.
+    pub fn to_toml_string(&self) -> Result<String, toml::ser::Error> {
+        toml::to_string_pretty(self)
+    }
+}
+
+/// The persisted RusTTY session store.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SessionStore {
+    /// Preferred storage owner.
+    pub default_format: StorageFormat,
+    /// Known sessions.
+    pub sessions: Vec<StoredSession>,
+}
+
+/// An individual stored session with import provenance.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StoredSession {
+    /// The normalized session configuration.
+    pub session: SessionConfig,
+    /// Where the session came from, if it was imported.
+    pub imported_from: Option<ImportSource>,
+    /// Optional migration or operator notes.
+    pub notes: Option<String>,
+}
+
+impl StoredSession {
+    /// Creates a RusTTY-native stored session.
+    #[must_use]
+    pub fn new(session: SessionConfig) -> Self {
+        Self {
+            session,
+            imported_from: None,
+            notes: None,
+        }
+    }
+
+    /// Creates an imported stored session.
+    #[must_use]
+    pub fn imported(session: SessionConfig, imported_from: ImportSource) -> Self {
+        Self {
+            session,
+            imported_from: Some(imported_from),
+            notes: None,
+        }
+    }
+}
+
+/// Legacy sources that can feed RusTTY's session store.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportSource {
+    /// Imported from the PuTTY registry layout.
+    PuttyRegistry,
+    /// Imported from a file-based PuTTY export.
+    PuttySessionFile,
+    /// Imported from an OpenSSH config source.
+    OpenSshConfig,
+}
+
+/// Config-visible metadata for a RusTTY tool.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ToolProfile {
+    /// Binary name for the tool.
+    pub binary_name: String,
+    /// Manual path for the tool.
+    pub manual_path: String,
+    /// Changelog path for the tool.
+    pub changelog_path: String,
+    /// Compatible PuTTY tool names.
+    pub replaces: Vec<String>,
+}
+
+impl From<ToolSpec> for ToolProfile {
+    fn from(tool: ToolSpec) -> Self {
+        Self {
+            binary_name: tool.binary_name.to_owned(),
+            manual_path: tool.doc_path.to_owned(),
+            changelog_path: tool.changelog_path.to_owned(),
+            replaces: tool
+                .replaces
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AppConfig, ImportSource, StoredSession};
+    use rustty_core::{Protocol, SessionConfig};
+
+    #[test]
+    fn sample_config_round_trips_through_toml() {
+        let config = AppConfig::sample();
+        let rendered = config
+            .to_toml_string()
+            .expect("sample config should serialize");
+        let parsed = AppConfig::from_toml_str(&rendered).expect("sample config should parse");
+        assert_eq!(parsed, config);
+    }
+
+    #[test]
+    fn sample_config_contains_every_tool_profile() {
+        let config = AppConfig::sample();
+        assert_eq!(config.tool_profiles.len(), 6);
+    }
+
+    #[test]
+    fn imported_sessions_capture_source() {
+        let session = SessionConfig::new("legacy", Protocol::Ssh).with_host("legacy.example");
+        let stored = StoredSession::imported(session, ImportSource::PuttyRegistry);
+        assert_eq!(stored.imported_from, Some(ImportSource::PuttyRegistry));
+    }
+}

@@ -1,7 +1,10 @@
 //! Session and protocol types shared by RusTTY tools.
 
+use serde::{Deserialize, Serialize};
+
 /// Supported protocols and tool-facing service modes in the RusTTY roadmap.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Protocol {
     /// SSH terminal and command sessions.
     Ssh,
@@ -53,7 +56,8 @@ impl Protocol {
 }
 
 /// Host key trust policies for SSH-family sessions.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HostKeyPolicy {
     /// Prompt before trusting an unknown host key.
     Ask,
@@ -64,7 +68,8 @@ pub enum HostKeyPolicy {
 }
 
 /// Configuration storage formats relevant to migration.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StorageFormat {
     /// RusTTY-native storage.
     Rustty,
@@ -73,7 +78,7 @@ pub enum StorageFormat {
 }
 
 /// A requested port-forwarding rule.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PortForwardSpec {
     /// Local or remote bind endpoint.
     pub source: String,
@@ -93,7 +98,7 @@ impl PortForwardSpec {
 }
 
 /// A normalized RusTTY session description.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SessionConfig {
     /// Human-readable session name.
     pub name: String,

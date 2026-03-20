@@ -6,6 +6,15 @@ This file tracks suite-level milestones. Tool-specific details live under
 
 == Unreleased
 
+[#suite-config-foundation]
+=== Configuration foundation
+
+* Added a dedicated RusTTY configuration crate with TOML serialization and
+  import provenance support.
+* Added contributor workflow files, CODEOWNERS, and issue-template guidance.
+* Added branch-name enforcement and AsciiDoc policy checks to repository
+  automation.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

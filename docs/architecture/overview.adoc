@@ -20,6 +20,12 @@ The shared core crate owns product metadata, tool metadata, and the initial
 session model. Later it will also own transport abstractions, terminal state,
 agent behaviors, importers, and configuration contracts.
 
+=== `rustty-config`
+
+The configuration crate owns RusTTY's versioned serialized config schema,
+sample-config generation, import provenance types, and TOML encode/decode
+helpers.
+
 === `rustty-ui`
 
 The UI crate is the shared presentation layer for the future GUI client. The

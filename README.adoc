@@ -64,11 +64,13 @@ In short:
 * xref:docs/index.adoc[Documentation Index]
 * xref:docs/architecture/overview.adoc[Architecture Overview]
 * xref:docs/architecture/workspace-layout.adoc[Workspace Layout]
+* xref:docs/architecture/config-model.adoc[Configuration Model]
 * xref:docs/architecture/release-process.adoc[Release Process]
 * xref:docs/migration/putty-compatibility.adoc[PuTTY Compatibility Notes]
 * xref:docs/legal/licensing.adoc[Licensing]
 * xref:CHANGELOG.adoc[Suite Changelog]
 * xref:docs/release-notes/next.adoc[Draft Release Notes]
+* xref:CONTRIBUTING.adoc[Contributing]
 
 == Bootstrap Status
 
@@ -89,6 +91,7 @@ cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo run -p xtask -- ci
+cargo run -p rustty -- --print-sample-config
 ----
 
 == Licensing

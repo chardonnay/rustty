@@ -29,6 +29,8 @@ jobs:
         run: cargo test --workspace
 
       - name: Repository checks
+        env:
+          RUSTTY_BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
         run: cargo run -p xtask -- ci
 
   cross-platform:

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: RusTTY Contributing Guide
+    url: https://github.com/chardonnay/rustty/blob/main/CONTRIBUTING.adoc
+    about: Read the branch, documentation, and release-note workflow before opening work.

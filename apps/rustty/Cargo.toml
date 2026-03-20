@@ -13,5 +13,6 @@ publish = false
 workspace = true
 
 [dependencies]
+rustty-config.workspace = true
 rustty-core.workspace = true
 rustty-ui.workspace = true

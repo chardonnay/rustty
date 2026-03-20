@@ -22,6 +22,9 @@ When a branch introduces a user-visible change, it must:
 . add or revise a corresponding release-note entry, and
 . link the release-note entry to the matching changelog anchor.
 
+Contributor-facing workflow changes should also update
+`CONTRIBUTING.adoc` when they alter branch, review, or release expectations.
+
 == Release Branches
 
 Release preparation happens on `release/<version>` branches. During a release:

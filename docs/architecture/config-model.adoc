@@ -1,0 +1,34 @@
+= Configuration Model
+:toc:
+
+RusTTY stores new configuration in a RusTTY-owned format and uses PuTTY storage
+only as an import source.
+
+== Goals
+
+* Keep the serialized schema explicit and versioned.
+* Preserve session provenance for imported data.
+* Keep tool metadata close to the Rust workspace so documentation and runtime
+  stay aligned.
+* Make it easy to print, inspect, and test sample configuration.
+
+== Bootstrap Schema
+
+The initial configuration crate models:
+
+* a schema version,
+* the product name,
+* a session store with normalized sessions,
+* optional import provenance for migrated sessions, and
+* a per-tool profile list derived from the shared tool metadata table.
+
+== Sample Configuration
+
+The `rustty` bootstrap binary can print a sample RusTTY TOML file:
+
+[source,shell]
+----
+cargo run -p rustty -- --print-sample-config
+----
+
+This sample is intended to give future import and storage work a stable target.

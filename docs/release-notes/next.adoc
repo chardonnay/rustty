@@ -3,6 +3,17 @@
 
 == Unreleased
 
+=== Configuration
+
+* `rustty` can now print a sample RusTTY configuration for schema review.
+  xref:../changelogs/rustty.adoc#rustty-sample-config[Changelog entry]
+
+=== Developer workflow
+
+* Contributor workflow, branch naming, and CODEOWNERS are now documented and
+  enforced more strictly.
+  xref:../../CHANGELOG.adoc#suite-config-foundation[Changelog entry]
+
 === Bootstrap
 
 * `rustty` bootstrap workspace and manual are in place.

@@ -16,6 +16,9 @@
 * RusTTY config validation now enforces unique session names so tool-level
   session lookup stays deterministic.
   xref:../../CHANGELOG.adoc#suite-rusplink-cli[Changelog entry]
+* RusTTY sessions can now store reusable SSH `username` and `password_env`
+  defaults, and config validation rejects empty auth-default values.
+  xref:../../CHANGELOG.adoc#suite-session-auth-defaults[Changelog entry]
 
 === rusplink
 
@@ -28,6 +31,9 @@
 * `rusplink` can now execute remote SSH commands with password authentication
   sourced from an environment variable.
   xref:../changelogs/rusplink.adoc#rusplink-ssh-exec-transport[Changelog entry]
+* `rusplink` can now consume saved session `username` and `password_env`
+  defaults and surface them in session listings.
+  xref:../changelogs/rusplink.adoc#rusplink-session-auth-defaults[Changelog entry]
 * `rusplink` can now resolve a default known-hosts path, verify exact stored
   host keys, persist first-seen keys for `accept_new`, and open interactive
   SSH shells with a remote PTY.

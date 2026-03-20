@@ -59,7 +59,7 @@ struct PlanRequest {
     dry_run: bool,
     remote_command: Vec<String>,
     username_override: Option<String>,
-    password_env_var: String,
+    password_env_override: Option<String>,
     unsafe_accept_host_key: bool,
 }
 
@@ -181,7 +181,7 @@ where
     let mut show_default_known_hosts_path = false;
     let mut remote_command = Vec::new();
     let mut username_override = None;
-    let mut password_env_var = None;
+    let mut password_env_override = None;
     let mut unsafe_accept_host_key = false;
     let mut known_hosts_path = None;
 
@@ -261,7 +261,7 @@ where
                     .get(index + 1)
                     .ok_or_else(|| usage_error("missing value for --password-env"))?;
                 set_option_once(
-                    &mut password_env_var,
+                    &mut password_env_override,
                     raw_env.clone(),
                     "duplicate --password-env flag",
                 )?;
@@ -301,7 +301,7 @@ where
                     )?;
                 } else if let Some(raw_env) = argument.strip_prefix("--password-env=") {
                     set_option_once(
-                        &mut password_env_var,
+                        &mut password_env_override,
                         raw_env.to_owned(),
                         "duplicate --password-env flag",
                     )?;
@@ -324,8 +324,6 @@ where
         index += 1;
     }
 
-    let password_env_var = password_env_var.unwrap_or_else(|| DEFAULT_PASSWORD_ENV.to_owned());
-
     if show_default_config_path {
         if show_default_known_hosts_path
             || list_sessions
@@ -337,7 +335,7 @@ where
             || dry_run
             || !remote_command.is_empty()
             || username_override.is_some()
-            || password_env_var != DEFAULT_PASSWORD_ENV
+            || password_env_override.is_some()
             || unsafe_accept_host_key
         {
             return Err(usage_error(
@@ -359,7 +357,7 @@ where
             || dry_run
             || !remote_command.is_empty()
             || username_override.is_some()
-            || password_env_var != DEFAULT_PASSWORD_ENV
+            || password_env_override.is_some()
             || unsafe_accept_host_key
         {
             return Err(usage_error(
@@ -377,7 +375,7 @@ where
             || dry_run
             || !remote_command.is_empty()
             || username_override.is_some()
-            || password_env_var != DEFAULT_PASSWORD_ENV
+            || password_env_override.is_some()
             || unsafe_accept_host_key
             || known_hosts_path.is_some()
         {
@@ -401,7 +399,7 @@ where
             dry_run,
             remote_command,
             username_override,
-            password_env_var,
+            password_env_override,
             unsafe_accept_host_key,
         })),
         (None, Some(target)) => {
@@ -419,7 +417,7 @@ where
                 dry_run,
                 remote_command,
                 username_override,
-                password_env_var,
+                password_env_override,
                 unsafe_accept_host_key,
             }))
         }
@@ -450,21 +448,28 @@ where
     let (config_path, config) = load_resolved_config(config_path)?;
 
     writeln!(writer, "config_path={}", config_path.display()).map_err(|error| error.to_string())?;
-    writeln!(writer, "name\tprotocol\thost\tport\timported_from")
-        .map_err(|error| error.to_string())?;
+    writeln!(
+        writer,
+        "name\tprotocol\thost\tport\tusername\tpassword_env\timported_from"
+    )
+    .map_err(|error| error.to_string())?;
 
     for stored_session in config.sessions() {
         let session = &stored_session.session;
         let host = session.host.as_deref().unwrap_or("-");
         let port = render_port(session.effective_port());
+        let username = session.username.as_deref().unwrap_or("-");
+        let password_env = session.password_env.as_deref().unwrap_or("-");
         let imported_from = render_import_source(stored_session.imported_from);
         writeln!(
             writer,
-            "{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
             session.name,
             session.protocol.label(),
             host,
             port,
+            username,
+            password_env,
             imported_from
         )
         .map_err(|error| error.to_string())?;
@@ -514,6 +519,11 @@ fn build_session_plan(
         .port_override
         .or_else(|| session.effective_port())
         .unwrap_or(22);
+    let password_env_var = request
+        .password_env_override
+        .clone()
+        .or_else(|| session.password_env.clone())
+        .unwrap_or_else(|| DEFAULT_PASSWORD_ENV.to_owned());
 
     Ok(ConnectionPlan {
         origin: PlanOrigin::Session,
@@ -521,7 +531,10 @@ fn build_session_plan(
         known_hosts_path,
         session_name: Some(session.name.clone()),
         protocol: session.protocol,
-        username: request.username_override.clone(),
+        username: request
+            .username_override
+            .clone()
+            .or_else(|| session.username.clone()),
         host,
         port,
         remote_command: request.remote_command.clone(),
@@ -529,7 +542,7 @@ fn build_session_plan(
         port_forwards: session.port_forwards.clone(),
         saved_in: Some(session.saved_in),
         imported_from: stored_session.imported_from,
-        password_env_var: request.password_env_var.clone(),
+        password_env_var,
         unsafe_accept_host_key: request.unsafe_accept_host_key,
     })
 }
@@ -543,6 +556,11 @@ fn build_direct_plan(
     if target.host.is_empty() {
         return Err("direct target host must not be empty".to_owned());
     }
+
+    let password_env_var = request
+        .password_env_override
+        .clone()
+        .unwrap_or_else(|| DEFAULT_PASSWORD_ENV.to_owned());
 
     Ok(ConnectionPlan {
         origin: PlanOrigin::Direct,
@@ -561,7 +579,7 @@ fn build_direct_plan(
         port_forwards: Vec::new(),
         saved_in: None,
         imported_from: None,
-        password_env_var: request.password_env_var.clone(),
+        password_env_var,
         unsafe_accept_host_key: request.unsafe_accept_host_key,
     })
 }
@@ -1044,7 +1062,7 @@ mod tests {
                 dry_run: true,
                 remote_command: vec!["uname".to_owned(), "-a".to_owned()],
                 username_override: Some("ops".to_owned()),
-                password_env_var: "RUSTTY_TEST_PASSWORD".to_owned(),
+                password_env_override: Some("RUSTTY_TEST_PASSWORD".to_owned()),
                 unsafe_accept_host_key: true,
             }))
         );
@@ -1077,7 +1095,7 @@ mod tests {
                 dry_run: true,
                 remote_command: Vec::new(),
                 username_override: None,
-                password_env_var: DEFAULT_PASSWORD_ENV.to_owned(),
+                password_env_override: None,
                 unsafe_accept_host_key: false,
             }))
         );
@@ -1127,8 +1145,44 @@ mod tests {
         assert_eq!(outcome, RunOutcome::Success);
         let output = String::from_utf8(output).expect("output should be valid UTF-8");
         assert!(output.contains("config_path="));
-        assert!(output.contains("name\tprotocol\thost\tport\timported_from"));
-        assert!(output.contains("example-ssh\tSSH\texample.com\t22\t-"));
+        assert!(
+            output.contains("name\tprotocol\thost\tport\tusername\tpassword_env\timported_from")
+        );
+        assert!(
+            output
+                .contains("example-ssh\tSSH\texample.com\t22\tops\tRUSTTY_EXAMPLE_SSH_PASSWORD\t-")
+        );
+        assert!(error_output.is_empty());
+    }
+
+    #[test]
+    fn session_dry_run_uses_stored_username_and_password_env_defaults() {
+        let config_path = write_config(AppConfig::sample());
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let mut output = Vec::new();
+        let mut error_output = Vec::new();
+
+        let outcome = run(
+            [
+                "--session".to_owned(),
+                "example-ssh".to_owned(),
+                "--config".to_owned(),
+                config_path.display().to_string(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
+                "--dry-run".to_owned(),
+                "--".to_owned(),
+                "hostname".to_owned(),
+            ],
+            &mut output,
+            &mut error_output,
+        )
+        .expect("session dry-run should succeed");
+
+        assert_eq!(outcome, RunOutcome::Success);
+        let output = String::from_utf8(output).expect("output should be valid UTF-8");
+        assert!(output.contains("username=ops"));
+        assert!(output.contains("password_env=RUSTTY_EXAMPLE_SSH_PASSWORD"));
         assert!(error_output.is_empty());
     }
 

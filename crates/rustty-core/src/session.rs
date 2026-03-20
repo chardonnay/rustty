@@ -106,6 +106,10 @@ pub struct SessionConfig {
     pub protocol: Protocol,
     /// Target host if one is required.
     pub host: Option<String>,
+    /// Preferred username for SSH-family sessions.
+    pub username: Option<String>,
+    /// Environment variable name that stores the session password.
+    pub password_env: Option<String>,
     /// Override port if different from the protocol default.
     pub port: Option<u16>,
     /// SSH host-key handling policy.
@@ -124,6 +128,8 @@ impl SessionConfig {
             name: name.into(),
             protocol,
             host: None,
+            username: None,
+            password_env: None,
             port: None,
             host_key_policy: HostKeyPolicy::Ask,
             saved_in: StorageFormat::Rustty,
@@ -135,6 +141,20 @@ impl SessionConfig {
     #[must_use]
     pub fn with_host(mut self, host: impl Into<String>) -> Self {
         self.host = Some(host.into());
+        self
+    }
+
+    /// Sets the preferred username.
+    #[must_use]
+    pub fn with_username(mut self, username: impl Into<String>) -> Self {
+        self.username = Some(username.into());
+        self
+    }
+
+    /// Sets the preferred password environment variable name.
+    #[must_use]
+    pub fn with_password_env(mut self, password_env: impl Into<String>) -> Self {
+        self.password_env = Some(password_env.into());
         self
     }
 
@@ -178,5 +198,18 @@ mod tests {
     fn new_sessions_default_to_rustty_storage() {
         let session = SessionConfig::new("local", Protocol::Serial);
         assert_eq!(session.saved_in, StorageFormat::Rustty);
+    }
+
+    #[test]
+    fn session_can_store_username_and_password_env() {
+        let session = SessionConfig::new("prod", Protocol::Ssh)
+            .with_username("ops")
+            .with_password_env("RUSTTY_PROD_PASSWORD");
+
+        assert_eq!(session.username.as_deref(), Some("ops"));
+        assert_eq!(
+            session.password_env.as_deref(),
+            Some("RUSTTY_PROD_PASSWORD")
+        );
     }
 }

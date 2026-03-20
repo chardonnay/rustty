@@ -57,6 +57,10 @@ from the default config path or an explicit `--config PATH`.
 Imported PuTTY sessions remain migration inputs, not the ongoing write target,
 but their provenance is surfaced in dry-run output and session listings.
 
+Saved RusTTY SSH sessions can now also carry a preferred `username` and
+`password_env`. `rusplink` uses those values automatically unless the caller
+overrides them with `--username` or `--password-env`.
+
 Host keys live in a separate OpenSSH-style `known_hosts` file that defaults to
 the same RusTTY-owned config base directory. `rusplink` can use the platform
 default location or an explicit `--known-hosts PATH`.
@@ -70,9 +74,8 @@ The bootstrap transport currently supports password authentication only.
 * Without `--password-env`, `rusplink` reads `RUSTTY_SSH_PASSWORD`.
 * `--username USER` overrides the username for session-backed connections.
 * Direct targets can also supply the username through `user@host`.
-
-Host-key confirmation and persistence are intentionally conservative during the
-bootstrap phase:
+* Saved sessions can provide default `username` and `password_env` values, so
+  recurring SSH targets no longer need to repeat them on every invocation.
 
 Host-key handling now follows the RusTTY session policy plus the local
 known-hosts file:
@@ -97,7 +100,9 @@ hostnames are preserved on disk but are not used as trust matches yet.
 The current bootstrap output is line-oriented and script-friendly. Dry-run
 plans expose origin, config path, known-hosts path, host, port, command,
 password source, host-key policy, transport host-key mode, storage origin, and
-port-forward metadata.
+port-forward metadata. Session listings now also expose stored usernames and
+password environment variable names so operators can review reusable auth
+defaults without opening the TOML file manually.
 
 == Compatibility Notes
 
@@ -138,6 +143,11 @@ rusplink ops@[2001:db8::10]:2222 --known-hosts /tmp/rustty-known_hosts --dry-run
 
 [source,text]
 ----
+rusplink --session production --config /path/to/config.toml --dry-run -- hostname
+----
+
+[source,text]
+----
 RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --known-hosts /tmp/rustty-known_hosts --unsafe-accept-host-key
 ----
 
@@ -157,6 +167,8 @@ Current bootstrap limits include:
   pre-trusted exact known-host entry for live execution
 * known-host matching is intentionally conservative and currently ignores
   wildcard, negated, marked, or hashed host patterns
+* saved sessions currently model password-environment indirection, not direct
+  secret storage or public-key authentication material
 * remote commands run through SSH `exec`; PTY-backed interactive shells are
   available only when no remote command is supplied
 * direct targets support `host`, `user@host`, `host:port`, and

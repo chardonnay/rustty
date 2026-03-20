@@ -35,6 +35,10 @@ stored-config validation through a small bootstrap CLI.
 `rustty` will read imported PuTTY sessions but should save new or updated
 configuration in RusTTY-owned storage.
 
+The current sample config now demonstrates session-level SSH defaults such as
+stored usernames and password environment variable names, so future GUI editing
+work has a concrete schema target from the beginning.
+
 == Logging and Diagnostics
 
 The tool is expected to expose a human-readable event log and detailed

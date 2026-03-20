@@ -31,6 +31,8 @@ impl AppConfig {
     pub fn sample() -> Self {
         let sample_session = SessionConfig::new("example-ssh", Protocol::Ssh)
             .with_host("example.com")
+            .with_username("ops")
+            .with_password_env("RUSTTY_EXAMPLE_SSH_PASSWORD")
             .with_port(22);
 
         Self {
@@ -108,6 +110,28 @@ impl AppConfig {
         for stored_session in &self.session_store.sessions {
             if stored_session.session.name.is_empty() {
                 return Err(ValidationError::EmptySessionName);
+            }
+
+            if stored_session
+                .session
+                .username
+                .as_deref()
+                .is_some_and(str::is_empty)
+            {
+                return Err(ValidationError::EmptySessionUsername(
+                    stored_session.session.name.clone(),
+                ));
+            }
+
+            if stored_session
+                .session
+                .password_env
+                .as_deref()
+                .is_some_and(str::is_empty)
+            {
+                return Err(ValidationError::EmptySessionPasswordEnv(
+                    stored_session.session.name.clone(),
+                ));
             }
 
             let is_new = seen_session_names.insert(stored_session.session.name.clone());
@@ -235,6 +259,20 @@ mod tests {
     }
 
     #[test]
+    fn sample_config_carries_session_auth_defaults() {
+        let config = AppConfig::sample();
+        let stored_session = config
+            .find_session("example-ssh")
+            .expect("sample config should contain the example session");
+
+        assert_eq!(stored_session.session.username.as_deref(), Some("ops"));
+        assert_eq!(
+            stored_session.session.password_env.as_deref(),
+            Some("RUSTTY_EXAMPLE_SSH_PASSWORD")
+        );
+    }
+
+    #[test]
     fn find_session_returns_matching_entry() {
         let config = AppConfig::sample();
         let stored_session = config
@@ -271,6 +309,38 @@ mod tests {
         assert_eq!(
             config.validate(),
             Err(ValidationError::DuplicateToolBinary("rustty".to_owned()))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_session_username() {
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("broken", Protocol::Ssh)
+                .with_host("broken.example")
+                .with_username(""),
+        ));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionUsername("broken".to_owned()))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_password_env() {
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("broken", Protocol::Ssh)
+                .with_host("broken.example")
+                .with_password_env(""),
+        ));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionPasswordEnv(
+                "broken".to_owned()
+            ))
         );
     }
 }

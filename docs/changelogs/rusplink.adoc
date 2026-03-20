@@ -2,6 +2,16 @@
 
 == Unreleased
 
+[#rusplink-session-auth-defaults]
+=== Session auth defaults
+
+* Added support for stored SSH `username` and `password_env` defaults in
+  RusTTY-backed sessions consumed by `rusplink`.
+* Made `--username` and `--password-env` override those saved session values
+  explicitly instead of forcing callers to repeat the same data every time.
+* Extended session listing output so reusable auth defaults are visible in the
+  line-oriented bootstrap table.
+
 [#rusplink-known-hosts-shell]
 === Known-host persistence and interactive shells
 

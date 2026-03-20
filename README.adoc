@@ -77,7 +77,7 @@ In short:
 The workspace currently provides:
 
 * a Rust workspace with shared core, transport, and UI crates,
-* a config bootstrap flow in `rustty`,
+* a config bootstrap flow in `rustty`, including sample session auth defaults,
 * a session-aware `rusplink` CLI with dry-run planning, bootstrap SSH exec
   transport, known-host persistence, and interactive shell support,
 * placeholder binaries for the remaining planned tools,

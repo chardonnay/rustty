@@ -31,6 +31,16 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added `rusplink` commands for default-path discovery, session listing, and
   SSH dry-run planning from either saved sessions or direct targets.
 
+[#suite-session-auth-defaults]
+=== Session auth defaults
+
+* Added reusable per-session SSH `username` and `password_env` fields to the
+  RusTTY config schema and bootstrap sample config.
+* Tightened config validation so empty stored auth-default values are rejected
+  before runtime.
+* Updated `rusplink` to consume and surface those saved auth defaults in
+  session listings and dry-run planning.
+
 [#suite-rusplink-ssh-transport]
 === rusplink SSH transport
 

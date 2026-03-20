@@ -2,6 +2,14 @@
 
 == Unreleased
 
+[#rustty-session-auth-defaults]
+=== Session auth defaults in sample config
+
+* Updated the bootstrap sample config to demonstrate per-session SSH
+  `username` and `password_env` values.
+* Tightened config validation so empty stored usernames and empty
+  `password_env` values are rejected before later runtime use.
+
 [#rustty-sample-config]
 === Sample config output
 

@@ -21,11 +21,14 @@ The initial configuration crate models:
 * a schema version,
 * the product name,
 * a session store with normalized sessions,
+* optional per-session SSH username and password-environment defaults,
 * optional import provenance for migrated sessions, and
 * a per-tool profile list derived from the shared tool metadata table.
 
 Session names are now validated as unique so CLI tools such as `rusplink` can
-load them deterministically by name.
+load them deterministically by name. Empty stored SSH usernames and empty
+`password_env` names are rejected during validation so bootstrap CLIs do not
+have to guess how to recover from malformed auth defaults.
 
 == Sample Configuration
 
@@ -37,6 +40,8 @@ cargo run -p rustty -- --print-sample-config
 ----
 
 This sample is intended to give future import and storage work a stable target.
+It now also demonstrates how RusTTY stores reusable SSH auth defaults inside a
+session definition.
 
 == Default Config Path Policy
 

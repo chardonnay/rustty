@@ -51,6 +51,15 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Extended `rusplink` dry-run and session-listing output so auth preference
   order and saved key defaults are visible in script-friendly output.
 
+[#suite-rusplink-local-forwarding]
+=== rusplink local port forwarding
+
+* Added reusable saved local port-forward rules to the RusTTY session flow.
+* Added `rusplink` support for CLI-defined and session-defined local TCP
+  forwarding through SSH `direct-tcpip`.
+* Tightened config validation so empty saved port-forward source or target
+  fields are rejected before runtime.
+
 [#suite-rusplink-ssh-transport]
 === rusplink SSH transport
 

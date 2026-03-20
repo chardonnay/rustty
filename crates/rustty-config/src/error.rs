@@ -98,6 +98,10 @@ pub enum ValidationError {
     EmptySessionKeyPassphraseEnv(String),
     /// A session declares a key-passphrase environment variable without a key path.
     DanglingSessionKeyPassphraseEnv(String),
+    /// A stored session local port-forward source is empty.
+    EmptySessionPortForwardSource(String, usize),
+    /// A stored session local port-forward target is empty.
+    EmptySessionPortForwardTarget(String, usize),
     /// Multiple sessions share the same name.
     DuplicateSessionName(String),
     /// The config repeats a tool profile binary name.
@@ -145,6 +149,18 @@ impl fmt::Display for ValidationError {
                 write!(
                     formatter,
                     "RusTTY session '{session_name}' uses key_passphrase_env without private_key_path"
+                )
+            }
+            Self::EmptySessionPortForwardSource(session_name, index) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' uses an empty port_forwards[{index}].source"
+                )
+            }
+            Self::EmptySessionPortForwardTarget(session_name, index) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' uses an empty port_forwards[{index}].target"
                 )
             }
             Self::DuplicateSessionName(session_name) => {

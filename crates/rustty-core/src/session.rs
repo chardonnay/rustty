@@ -248,4 +248,14 @@ mod tests {
             Some("RUSTTY_PROD_KEY_PASSPHRASE")
         );
     }
+
+    #[test]
+    fn session_can_store_port_forward_rules() {
+        let mut session = SessionConfig::new("prod", Protocol::Ssh);
+        session.add_port_forward("127.0.0.1:15432", "db.internal:5432");
+
+        assert_eq!(session.port_forwards.len(), 1);
+        assert_eq!(session.port_forwards[0].source, "127.0.0.1:15432");
+        assert_eq!(session.port_forwards[0].target, "db.internal:5432");
+    }
 }

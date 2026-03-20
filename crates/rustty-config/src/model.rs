@@ -164,6 +164,21 @@ impl AppConfig {
                 ));
             }
 
+            for (index, port_forward) in stored_session.session.port_forwards.iter().enumerate() {
+                if port_forward.source.is_empty() {
+                    return Err(ValidationError::EmptySessionPortForwardSource(
+                        stored_session.session.name.clone(),
+                        index,
+                    ));
+                }
+                if port_forward.target.is_empty() {
+                    return Err(ValidationError::EmptySessionPortForwardTarget(
+                        stored_session.session.name.clone(),
+                        index,
+                    ));
+                }
+            }
+
             let is_new = seen_session_names.insert(stored_session.session.name.clone());
             if !is_new {
                 return Err(ValidationError::DuplicateSessionName(
@@ -422,6 +437,42 @@ mod tests {
             config.validate(),
             Err(ValidationError::DanglingSessionKeyPassphraseEnv(
                 "broken".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_port_forward_source() {
+        let mut config = AppConfig::sample();
+        let mut session = SessionConfig::new("broken", Protocol::Ssh)
+            .with_host("broken.example")
+            .with_password_env("RUSTTY_BROKEN_PASSWORD");
+        session.add_port_forward("", "db.internal:5432");
+        config.add_session(StoredSession::new(session));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionPortForwardSource(
+                "broken".to_owned(),
+                0
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_port_forward_target() {
+        let mut config = AppConfig::sample();
+        let mut session = SessionConfig::new("broken", Protocol::Ssh)
+            .with_host("broken.example")
+            .with_password_env("RUSTTY_BROKEN_PASSWORD");
+        session.add_port_forward("127.0.0.1:15432", "");
+        config.add_session(StoredSession::new(session));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionPortForwardTarget(
+                "broken".to_owned(),
+                0
             ))
         );
     }

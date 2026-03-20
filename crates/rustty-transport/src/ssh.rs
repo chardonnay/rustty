@@ -2,6 +2,7 @@
 
 use std::{
     fmt, io,
+    net::SocketAddr,
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
@@ -11,7 +12,12 @@ use crossterm::terminal;
 use russh::keys::{PrivateKeyWithHashAlg, load_secret_key};
 use russh::{ChannelMsg, Disconnect, client};
 use ssh_key::{HashAlg, PublicKey};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, TcpStream},
+    sync::mpsc,
+    task::JoinSet,
+};
 
 /// Host-key handling mode for the current transport attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,6 +67,19 @@ pub enum SshAuthentication {
     },
 }
 
+/// A locally listening SSH port-forwarding rule.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshLocalForwardSpec {
+    /// Local bind host.
+    pub listen_host: String,
+    /// Local bind port.
+    pub listen_port: u16,
+    /// Remote host reached through the SSH server.
+    pub target_host: String,
+    /// Remote target port reached through the SSH server.
+    pub target_port: u16,
+}
+
 /// A request to run a single remote command over SSH.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SshExecRequest {
@@ -74,6 +93,8 @@ pub struct SshExecRequest {
     pub authentication_methods: Vec<SshAuthentication>,
     /// Command string sent through `exec`.
     pub command: String,
+    /// Requested local forwarding listeners to keep open during the SSH session.
+    pub local_forwards: Vec<SshLocalForwardSpec>,
     /// Host-key handling mode for this request.
     pub host_key_check: HostKeyCheck,
 }
@@ -93,6 +114,8 @@ pub struct SshShellRequest {
     pub term_type: String,
     /// Initial terminal size sent in the PTY request.
     pub terminal_size: TerminalSize,
+    /// Requested local forwarding listeners to keep open during the SSH session.
+    pub local_forwards: Vec<SshLocalForwardSpec>,
     /// Host-key handling mode for this request.
     pub host_key_check: HostKeyCheck,
 }
@@ -152,6 +175,20 @@ pub enum TransportError {
     Runtime(io::Error),
     /// Local terminal or stdio operation failed.
     LocalIo(io::Error),
+    /// Binding a local forwarding socket failed.
+    LocalForwardBind {
+        /// Bind address that failed.
+        address: String,
+        /// Underlying bind error.
+        source: io::Error,
+    },
+    /// Accepting a local forwarding connection failed.
+    LocalForwardAccept {
+        /// Listener address that failed.
+        address: String,
+        /// Underlying accept error.
+        source: io::Error,
+    },
     /// The request does not contain a command.
     MissingCommand,
     /// All configured authentication methods were rejected by the server.
@@ -185,6 +222,18 @@ impl fmt::Display for TransportError {
         match self {
             Self::Runtime(source) => write!(formatter, "failed to start Tokio runtime: {source}"),
             Self::LocalIo(source) => write!(formatter, "local terminal I/O failed: {source}"),
+            Self::LocalForwardBind { address, source } => {
+                write!(
+                    formatter,
+                    "failed to bind local forward {address}: {source}"
+                )
+            }
+            Self::LocalForwardAccept { address, source } => {
+                write!(
+                    formatter,
+                    "local forward listener {address} failed while accepting a connection: {source}"
+                )
+            }
             Self::MissingCommand => write!(formatter, "missing remote command for SSH exec"),
             Self::AuthenticationRejected => {
                 write!(formatter, "SSH authentication was rejected")
@@ -227,7 +276,10 @@ impl fmt::Display for TransportError {
 impl std::error::Error for TransportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Runtime(source) | Self::LocalIo(source) => Some(source),
+            Self::Runtime(source)
+            | Self::LocalIo(source)
+            | Self::LocalForwardBind { source, .. }
+            | Self::LocalForwardAccept { source, .. } => Some(source),
             Self::Russh(source) => Some(source),
             Self::PrivateKeyLoad { source, .. } => Some(source),
             Self::MissingCommand
@@ -265,6 +317,7 @@ async fn async_execute_ssh_command(
         &request.host_key_check,
     )
     .await?;
+    let mut local_forward_runtime = LocalForwardRuntime::start(&request.local_forwards).await?;
 
     let mut channel = session
         .channel_open_session()
@@ -279,35 +332,50 @@ async fn async_execute_ssh_command(
     let mut stderr = Vec::new();
     let mut exit_status = None;
 
-    while let Some(message) = channel.wait().await {
-        match message {
-            ChannelMsg::Data { data } => stdout.extend_from_slice(data.as_ref()),
-            ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(data.as_ref()),
-            ChannelMsg::ExitStatus {
-                exit_status: status,
-            } => exit_status = Some(status),
-            ChannelMsg::ExitSignal {
-                signal_name,
-                error_message,
-                ..
-            } => {
-                if !error_message.is_empty() {
-                    stderr.extend_from_slice(error_message.as_bytes());
-                    stderr.push(b'\n');
-                }
-                stderr
-                    .extend_from_slice(format!("remote exit signal: {signal_name:?}\n").as_bytes());
-                exit_status.get_or_insert(128);
+    loop {
+        tokio::select! {
+            Some(forward_request) = local_forward_runtime.connection_requests.recv(), if local_forward_runtime.enabled => {
+                open_local_forward_channel(&session, forward_request, &mut local_forward_runtime).await?;
             }
-            ChannelMsg::Close => break,
-            ChannelMsg::Eof
-            | ChannelMsg::Open { .. }
-            | ChannelMsg::OpenFailure(_)
-            | ChannelMsg::WindowAdjusted { .. }
-            | ChannelMsg::Success
-            | ChannelMsg::Failure
-            | ChannelMsg::XonXoff { .. }
-            | _ => {}
+            Some(forward_error) = local_forward_runtime.errors.recv(), if local_forward_runtime.enabled => {
+                return Err(forward_error);
+            }
+            maybe_message = channel.wait() => {
+                let Some(message) = maybe_message else {
+                    break;
+                };
+
+                match message {
+                    ChannelMsg::Data { data } => stdout.extend_from_slice(data.as_ref()),
+                    ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(data.as_ref()),
+                    ChannelMsg::ExitStatus {
+                        exit_status: status,
+                    } => exit_status = Some(status),
+                    ChannelMsg::ExitSignal {
+                        signal_name,
+                        error_message,
+                        ..
+                    } => {
+                        if !error_message.is_empty() {
+                            stderr.extend_from_slice(error_message.as_bytes());
+                            stderr.push(b'\n');
+                        }
+                        stderr.extend_from_slice(
+                            format!("remote exit signal: {signal_name:?}\n").as_bytes(),
+                        );
+                        exit_status.get_or_insert(128);
+                    }
+                    ChannelMsg::Close => break,
+                    ChannelMsg::Eof
+                    | ChannelMsg::Open { .. }
+                    | ChannelMsg::OpenFailure(_)
+                    | ChannelMsg::WindowAdjusted { .. }
+                    | ChannelMsg::Success
+                    | ChannelMsg::Failure
+                    | ChannelMsg::XonXoff { .. }
+                    | _ => {}
+                }
+            }
         }
     }
 
@@ -332,6 +400,7 @@ async fn async_run_interactive_shell(
         &request.host_key_check,
     )
     .await?;
+    let mut local_forward_runtime = LocalForwardRuntime::start(&request.local_forwards).await?;
 
     let mut channel = session
         .channel_open_session()
@@ -392,6 +461,12 @@ async fn async_run_interactive_shell(
                         .map_err(TransportError::Russh)?;
                 }
             }
+            Some(forward_request) = local_forward_runtime.connection_requests.recv(), if local_forward_runtime.enabled => {
+                open_local_forward_channel(&session, forward_request, &mut local_forward_runtime).await?;
+            }
+            Some(forward_error) = local_forward_runtime.errors.recv(), if local_forward_runtime.enabled => {
+                return Err(forward_error);
+            }
             maybe_message = channel.wait() => {
                 if handle_shell_channel_message(
                     maybe_message,
@@ -423,6 +498,12 @@ async fn async_run_interactive_shell(
                         .map_err(TransportError::Russh)?,
                     Err(source) => return Err(TransportError::LocalIo(source)),
                 }
+            }
+            Some(forward_request) = local_forward_runtime.connection_requests.recv(), if local_forward_runtime.enabled => {
+                open_local_forward_channel(&session, forward_request, &mut local_forward_runtime).await?;
+            }
+            Some(forward_error) = local_forward_runtime.errors.recv(), if local_forward_runtime.enabled => {
+                return Err(forward_error);
             }
             maybe_message = channel.wait() => {
                 if handle_shell_channel_message(
@@ -614,6 +695,131 @@ async fn disconnect_session(session: &mut client::Handle<ClientHandler>, reason:
         .await;
 }
 
+struct LocalForwardRuntime {
+    enabled: bool,
+    connection_requests: mpsc::UnboundedReceiver<ForwardConnectionRequest>,
+    errors: mpsc::UnboundedReceiver<TransportError>,
+    error_sender: mpsc::UnboundedSender<TransportError>,
+    accept_tasks: JoinSet<()>,
+    bridge_tasks: JoinSet<()>,
+}
+
+impl LocalForwardRuntime {
+    async fn start(local_forwards: &[SshLocalForwardSpec]) -> Result<Self, TransportError> {
+        let (request_sender, connection_requests) = mpsc::unbounded_channel();
+        let (error_sender, errors) = mpsc::unbounded_channel();
+        let mut runtime = Self {
+            enabled: !local_forwards.is_empty(),
+            connection_requests,
+            errors,
+            error_sender: error_sender.clone(),
+            accept_tasks: JoinSet::new(),
+            bridge_tasks: JoinSet::new(),
+        };
+
+        for local_forward in local_forwards {
+            let listen_address = render_socket_endpoint(
+                local_forward.listen_host.as_str(),
+                local_forward.listen_port,
+            );
+            let listener = TcpListener::bind(listen_address.as_str())
+                .await
+                .map_err(|source| TransportError::LocalForwardBind {
+                    address: listen_address.clone(),
+                    source,
+                })?;
+            let local_forward = local_forward.clone();
+            let request_sender = request_sender.clone();
+            let error_sender = error_sender.clone();
+            runtime.accept_tasks.spawn(async move {
+                loop {
+                    match listener.accept().await {
+                        Ok((stream, originator_address)) => {
+                            if request_sender
+                                .send(ForwardConnectionRequest {
+                                    local_forward: local_forward.clone(),
+                                    stream,
+                                    originator_address,
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Err(source) => {
+                            let _ = error_sender.send(TransportError::LocalForwardAccept {
+                                address: listen_address.clone(),
+                                source,
+                            });
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        Ok(runtime)
+    }
+}
+
+impl Drop for LocalForwardRuntime {
+    fn drop(&mut self) {
+        self.accept_tasks.abort_all();
+        self.bridge_tasks.abort_all();
+    }
+}
+
+struct ForwardConnectionRequest {
+    local_forward: SshLocalForwardSpec,
+    stream: TcpStream,
+    originator_address: SocketAddr,
+}
+
+async fn open_local_forward_channel(
+    session: &client::Handle<ClientHandler>,
+    forward_request: ForwardConnectionRequest,
+    local_forward_runtime: &mut LocalForwardRuntime,
+) -> Result<(), TransportError> {
+    let channel = session
+        .channel_open_direct_tcpip(
+            forward_request.local_forward.target_host.clone(),
+            u32::from(forward_request.local_forward.target_port),
+            forward_request.originator_address.ip().to_string(),
+            u32::from(forward_request.originator_address.port()),
+        )
+        .await
+        .map_err(TransportError::Russh)?;
+    let error_sender = local_forward_runtime.error_sender.clone();
+    local_forward_runtime.bridge_tasks.spawn(async move {
+        if let Err(error) = bridge_local_forward_stream(forward_request.stream, channel).await {
+            let _ = error_sender.send(error);
+        }
+    });
+    Ok(())
+}
+
+async fn bridge_local_forward_stream(
+    mut stream: TcpStream,
+    channel: russh::Channel<client::Msg>,
+) -> Result<(), TransportError> {
+    let mut channel_stream = channel.into_stream();
+    tokio::io::copy_bidirectional(&mut stream, &mut channel_stream)
+        .await
+        .map_err(TransportError::LocalIo)?;
+    channel_stream
+        .shutdown()
+        .await
+        .map_err(TransportError::LocalIo)
+}
+
+fn render_socket_endpoint(host: &str, port: u16) -> String {
+    if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
 fn map_connect_error(source: russh::Error, state: &Arc<Mutex<HostKeyState>>) -> TransportError {
     if let Some(mismatch) = lock_state(state).host_key_mismatch.clone() {
         return TransportError::HostKeyMismatch {
@@ -728,8 +934,8 @@ mod tests {
     use ssh_key::PublicKey;
 
     use super::{
-        HostKeyCheck, SshAuthentication, SshExecRequest, TerminalSize, TransportError,
-        VerifiedHostKeySource, execute_ssh_command,
+        HostKeyCheck, SshAuthentication, SshExecRequest, SshLocalForwardSpec, TerminalSize,
+        TransportError, VerifiedHostKeySource, execute_ssh_command,
     };
 
     #[test]
@@ -742,6 +948,7 @@ mod tests {
                 password: "secret".to_owned(),
             }],
             command: "   ".to_owned(),
+            local_forwards: Vec::new(),
             host_key_check: HostKeyCheck::AcceptAny,
         };
 
@@ -803,5 +1010,20 @@ mod tests {
             }
             SshAuthentication::Password { .. } => panic!("expected public-key auth"),
         }
+    }
+
+    #[test]
+    fn local_forward_spec_is_plain_data() {
+        let forward = SshLocalForwardSpec {
+            listen_host: "127.0.0.1".to_owned(),
+            listen_port: 8080,
+            target_host: "db.internal".to_owned(),
+            target_port: 5432,
+        };
+
+        assert_eq!(forward.listen_host, "127.0.0.1");
+        assert_eq!(forward.listen_port, 8080);
+        assert_eq!(forward.target_host, "db.internal");
+        assert_eq!(forward.target_port, 5432);
     }
 }

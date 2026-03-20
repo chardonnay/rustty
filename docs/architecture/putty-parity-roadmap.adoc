@@ -8,6 +8,7 @@ branches can continue to work through the same queue without losing context.
 == Status Legend
 
 * `done`: implemented in the current bootstrap workspace
+* `in_progress`: partially implemented, with follow-up work already queued
 * `next`: highest-priority missing work
 * `later`: required for full-suite parity, but intentionally deferred
 
@@ -22,12 +23,12 @@ branches can continue to work through the same queue without losing context.
 * remote `exec` requests and interactive shell sessions with remote PTY
 
 [#roadmap-rusplink-forwarding]
-=== 2. rusplink port forwarding (`next`)
+=== 2. rusplink port forwarding (`in_progress`)
 
-* local port forwarding
-* remote port forwarding
-* dynamic forwarding and SOCKS-style tunnels
-* saved forwarding rules in RusTTY sessions
+* local port forwarding (`done`)
+* saved local forwarding rules in RusTTY sessions (`done`)
+* remote port forwarding (`next`)
+* dynamic forwarding and SOCKS-style tunnels (`next`)
 
 [#roadmap-rusplink-advanced-auth]
 === 3. rusplink advanced SSH auth and compatibility (`next`)

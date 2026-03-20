@@ -23,6 +23,7 @@ The initial configuration crate models:
 * a session store with normalized sessions,
 * optional per-session SSH username, private-key path, key-passphrase
   environment variable, and password-environment defaults,
+* optional per-session SSH local port-forward definitions,
 * optional import provenance for migrated sessions, and
 * a per-tool profile list derived from the shared tool metadata table.
 
@@ -31,7 +32,8 @@ load them deterministically by name. Empty stored SSH usernames and empty
 `password_env`, `private_key_path`, and `key_passphrase_env` values are
 rejected during validation so bootstrap CLIs do not have to guess how to
 recover from malformed auth defaults. `key_passphrase_env` is also rejected
-when no `private_key_path` is present.
+when no `private_key_path` is present. Empty saved local port-forward source or
+target strings are also rejected during validation.
 
 == Sample Configuration
 
@@ -60,6 +62,18 @@ This keeps public-key-only sessions from requiring an unnecessary password
 environment variable while still preserving the bootstrap password flow for
 direct targets and simple saved sessions.
 
+== Local Port-Forward Storage
+
+RusTTY stores saved local forwarding rules as `source` and `target` endpoint
+pairs inside `port_forwards`.
+
+* `source` is the local bind endpoint and accepts either `port` or `host:port`
+* `target` is the remote endpoint and must include `host:port`
+
+The current bootstrap interpretation is local forwarding only. `rusplink`
+normalizes a bare `source` port such as `15432` to `127.0.0.1:15432` before it
+reaches the SSH transport layer.
+
 == Default Config Path Policy
 
 RusTTY resolves the default config file by platform:
@@ -83,7 +97,8 @@ config schema and on-disk validation path.
 
 The same config schema can now also be consumed by `rusplink` for session
 listing, SSH dry-run planning, and live bootstrap transport with either
-password or public-key authentication.
+password or public-key authentication. Saved local port-forwards are now also
+loaded into `rusplink` execution plans and live SSH sessions.
 
 == Known-Hosts Path Policy
 

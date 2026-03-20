@@ -1,0 +1,57 @@
+= rusftp Manual
+:toc:
+
+`rusftp` is the planned SFTP client for RusTTY. It replaces PuTTY's `psftp`.
+
+== Purpose
+
+`rusftp` is intended for general interactive and scripted file transfer work
+where directory operations and richer remote file handling matter.
+
+== Planned Capability Profile
+
+* interactive SFTP sessions
+* batch operation support
+* session-backed authentication defaults
+* compatibility import for PuTTY-era connection settings
+
+== Usage Model
+
+The bootstrap binary currently prints a placeholder message. The long-term CLI
+should support both interactive shell-like usage and batch-driven execution.
+
+== Configuration and Storage
+
+`rusftp` should read RusTTY-native sessions and optionally import PuTTY session
+settings once during migration.
+
+== Logging and Diagnostics
+
+The tool should surface command failures, remote path issues, and protocol
+capability differences clearly enough for script debugging.
+
+== Compatibility Notes
+
+RusTTY should document any intentional command-language differences from
+`psftp`, especially if they improve automation or consistency.
+
+== Examples
+
+[source,text]
+----
+rusftp user@example.com
+----
+
+[source,text]
+----
+rusftp --batch sync.rusftp user@example.com
+----
+
+== Current Limits
+
+The bootstrap implementation does not yet open SFTP sessions.
+
+== Related Docs
+
+* xref:../migration/session-import.adoc[Session Import]
+* xref:../changelogs/rusftp.adoc[rusftp Changelog]

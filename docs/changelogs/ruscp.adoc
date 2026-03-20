@@ -1,0 +1,9 @@
+= ruscp Changelog
+
+== Unreleased
+
+[#ruscp-bootstrap-repo]
+=== Bootstrap repository
+
+* Added the `ruscp` binary scaffold.
+* Added the `ruscp` manual and documented its role as the PSCP replacement.

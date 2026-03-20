@@ -1,0 +1,11 @@
+= RusTTY 0.1.0 Release Notes
+:toc:
+
+This versioned release-note file is reserved for the first tagged RusTTY
+release. Until then, the working draft lives in
+xref:next.adoc[docs/release-notes/next.adoc].
+
+== Bootstrap baseline
+
+* The repository and documentation baseline are established.
+  xref:../changelogs/rustty.adoc#rustty-bootstrap-repo[rustty changelog]

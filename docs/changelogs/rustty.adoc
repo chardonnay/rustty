@@ -1,0 +1,9 @@
+= rustty Changelog
+
+== Unreleased
+
+[#rustty-bootstrap-repo]
+=== Bootstrap repository
+
+* Added the `rustty` binary scaffold.
+* Added the `rustty` manual and documented its role as the PuTTY replacement.

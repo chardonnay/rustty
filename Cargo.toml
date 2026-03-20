@@ -1,0 +1,28 @@
+[workspace]
+members = [
+    "apps/rusagent",
+    "apps/ruscp",
+    "apps/rusftp",
+    "apps/rusplink",
+    "apps/rustty",
+    "apps/rusttygen",
+    "crates/rustty-core",
+    "crates/rustty-ui",
+    "xtask",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/chardonnay/rustty"
+rust-version = "1.85"
+authors = ["Daniel Mengel <daniel.mengel@gmail.com>"]
+
+[workspace.dependencies]
+rustty-core = { path = "crates/rustty-core", version = "0.1.0" }
+rustty-ui = { path = "crates/rustty-ui", version = "0.1.0" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"

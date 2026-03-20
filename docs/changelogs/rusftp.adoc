@@ -1,0 +1,9 @@
+= rusftp Changelog
+
+== Unreleased
+
+[#rusftp-bootstrap-repo]
+=== Bootstrap repository
+
+* Added the `rusftp` binary scaffold.
+* Added the `rusftp` manual and documented its role as the PSFTP replacement.

@@ -1,0 +1,24 @@
+= RusTTY Changelog
+:toc:
+
+This file tracks suite-level milestones. Tool-specific details live under
+`docs/changelogs/`.
+
+== Unreleased
+
+=== Repository bootstrap
+
+* Established the RusTTY workspace, tool map, and shared branch policy.
+* Added extensive AsciiDoc documentation for architecture, migration,
+  licensing, tools, and release management.
+* Added per-tool changelogs and release-note drafts intended to feed future
+  build and release automation.
+
+Related changelogs:
+
+* xref:docs/changelogs/rustty.adoc[rustty]
+* xref:docs/changelogs/rusplink.adoc[rusplink]
+* xref:docs/changelogs/ruscp.adoc[ruscp]
+* xref:docs/changelogs/rusftp.adoc[rusftp]
+* xref:docs/changelogs/rusagent.adoc[rusagent]
+* xref:docs/changelogs/rusttygen.adoc[rusttygen]

@@ -1,0 +1,19 @@
+= RusTTY Draft Release Notes
+:toc:
+
+== Unreleased
+
+=== Bootstrap
+
+* `rustty` bootstrap workspace and manual are in place.
+  xref:../changelogs/rustty.adoc#rustty-bootstrap-repo[Changelog entry]
+* `rusplink` bootstrap workspace and manual are in place.
+  xref:../changelogs/rusplink.adoc#rusplink-bootstrap-repo[Changelog entry]
+* `ruscp` bootstrap workspace and manual are in place.
+  xref:../changelogs/ruscp.adoc#ruscp-bootstrap-repo[Changelog entry]
+* `rusftp` bootstrap workspace and manual are in place.
+  xref:../changelogs/rusftp.adoc#rusftp-bootstrap-repo[Changelog entry]
+* `rusagent` bootstrap workspace and manual are in place.
+  xref:../changelogs/rusagent.adoc#rusagent-bootstrap-repo[Changelog entry]
+* `rusttygen` bootstrap workspace and manual are in place.
+  xref:../changelogs/rusttygen.adoc#rusttygen-bootstrap-repo[Changelog entry]

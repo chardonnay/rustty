@@ -1,0 +1,59 @@
+= rusplink Manual
+:toc:
+
+`rusplink` is the planned command-line remote execution and SSH client for
+RusTTY. It replaces PuTTY's `plink`.
+
+== Purpose
+
+`rusplink` is intended for scripting, automation, remote command execution,
+port forwarding, and non-GUI access to the RusTTY connection stack.
+
+== Planned Capability Profile
+
+* SSH command execution
+* interactive terminal SSH sessions
+* local, remote, and dynamic port forwarding
+* session loading from RusTTY configuration
+* compatibility-oriented import of legacy PuTTY sessions
+
+== Usage Model
+
+The bootstrap binary currently prints an implementation placeholder and points
+to this manual. The future CLI should remain scriptable, stable, and explicit.
+
+== Configuration and Storage
+
+`rusplink` should accept explicit flags as well as RusTTY session references.
+Imported PuTTY sessions are migration inputs, not the ongoing write target.
+
+== Logging and Diagnostics
+
+The CLI should provide structured diagnostics for authentication failures, host
+key decisions, and port-forwarding setup issues.
+
+== Compatibility Notes
+
+Flag naming may diverge where a clearer Rust-native interface is worthwhile,
+but any user-visible break from `plink` must be documented.
+
+== Examples
+
+[source,text]
+----
+rusplink user@example.com
+----
+
+[source,text]
+----
+rusplink --session production -- command --flag
+----
+
+== Current Limits
+
+The bootstrap implementation does not yet connect to remote hosts.
+
+== Related Docs
+
+* xref:../migration/session-import.adoc[Session Import]
+* xref:../changelogs/rusplink.adoc[rusplink Changelog]

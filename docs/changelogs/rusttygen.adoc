@@ -1,0 +1,10 @@
+= rusttygen Changelog
+
+== Unreleased
+
+[#rusttygen-bootstrap-repo]
+=== Bootstrap repository
+
+* Added the `rusttygen` binary scaffold.
+* Added the `rusttygen` manual and documented its role as the PuTTYgen
+  replacement.

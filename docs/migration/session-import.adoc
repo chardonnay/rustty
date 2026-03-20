@@ -1,0 +1,24 @@
+= Session Import
+:toc:
+
+RusTTY plans to import PuTTY sessions as a migration path, but new edits and
+saves should land in a RusTTY-owned configuration format.
+
+== Migration Intent
+
+* Read PuTTY sessions from their existing source locations.
+* Normalize imported values into RusTTY session types.
+* Preserve enough provenance to explain where a session came from.
+* Avoid silently writing back into PuTTY-managed storage after import.
+
+== Expected Flow
+
+. Discover legacy PuTTY sessions.
+. Parse them into RusTTY session types.
+. Surface import diagnostics to the user.
+. Save the imported result into RusTTY configuration storage.
+
+== Compatibility Notes
+
+Some PuTTY-specific settings may need lossy translation. When that happens,
+RusTTY should record the decision in logs and user-facing migration output.

@@ -1,0 +1,23 @@
+= Key Import and Export
+:toc:
+
+RusTTY intends to support both PuTTY and OpenSSH key material where practical.
+
+== Planned Formats
+
+* PuTTY PPK input
+* PuTTY PPK output where compatibility requires it
+* OpenSSH private and public key formats
+
+== Migration Expectations
+
+* Keep PuTTY attribution and legal notices for any code or fixtures derived
+  from PuTTY key-format handling.
+* Document any unsupported legacy key variants explicitly.
+* Keep conversion operations auditable through release notes and changelogs.
+
+== Operator Guidance
+
+Users migrating from PuTTY should prefer importing existing keys and then
+re-saving them through RusTTY tooling only after validating passphrases,
+comments, fingerprints, and target format requirements.

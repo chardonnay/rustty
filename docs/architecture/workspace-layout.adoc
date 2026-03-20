@@ -1,0 +1,39 @@
+= Workspace Layout
+:toc:
+
+== Root
+
+* `Cargo.toml` defines the workspace and shared metadata.
+* `README.adoc`, `CHANGELOG.adoc`, `NOTICE.adoc`, and `LICENSE` define the
+  project-facing contract.
+* `.github/workflows/ci.yml` runs formatting, linting, tests, and doc checks.
+
+== Crates
+
+* `crates/rustty-core` contains product metadata and shared domain types.
+* `crates/rustty-ui` contains shared GUI-facing bootstrap logic.
+
+== Applications
+
+* `apps/rustty`
+* `apps/rusplink`
+* `apps/ruscp`
+* `apps/rusftp`
+* `apps/rusagent`
+* `apps/rusttygen`
+
+Each application crate is small by design and should depend on shared crates
+for behavior instead of growing bespoke copies of the same logic.
+
+== Tooling
+
+* `xtask` hosts repository validation commands.
+
+== Documentation
+
+* `docs/architecture/` stores design and process docs.
+* `docs/tools/` stores full manuals for each user-facing tool.
+* `docs/migration/` stores compatibility and import docs.
+* `docs/legal/` stores license and provenance guidance.
+* `docs/changelogs/` stores per-tool change histories.
+* `docs/release-notes/` stores draft and versioned release notes.

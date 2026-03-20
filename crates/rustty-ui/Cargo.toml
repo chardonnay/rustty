@@ -1,0 +1,16 @@
+[package]
+name = "rustty-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Shared UI-facing bootstrap helpers for RusTTY."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rustty-core.workspace = true

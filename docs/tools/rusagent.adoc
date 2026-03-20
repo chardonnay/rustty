@@ -1,0 +1,59 @@
+= rusagent Manual
+:toc:
+
+`rusagent` is the planned SSH agent component for RusTTY. It replaces PuTTY's
+`pageant`.
+
+== Purpose
+
+`rusagent` is intended to hold private keys securely, answer signing requests,
+and provide a stable authentication bridge for the other RusTTY tools.
+
+== Planned Capability Profile
+
+* agent startup and lifecycle management
+* key loading and unloading
+* integration with RusTTY-native and imported key formats
+* future platform-specific socket and IPC handling
+
+== Usage Model
+
+The bootstrap binary currently prints a placeholder message. The future tool
+should support both foreground diagnostics and platform-appropriate background
+operation.
+
+== Configuration and Storage
+
+Key metadata should remain consistent across `rusagent` and `rusttygen`.
+Imported PuTTY keys must retain attribution and migration clarity.
+
+== Logging and Diagnostics
+
+The agent should emit safe diagnostics for load failures, passphrase problems,
+socket binding issues, and client compatibility mismatches.
+
+== Compatibility Notes
+
+RusTTY may diverge from `pageant` in transport details or UI surface, but any
+observable change must be documented for operators.
+
+== Examples
+
+[source,text]
+----
+rusagent
+----
+
+[source,text]
+----
+rusagent --list
+----
+
+== Current Limits
+
+The bootstrap implementation does not yet manage real keys or sockets.
+
+== Related Docs
+
+* xref:../migration/key-import.adoc[Key Import and Export]
+* xref:../changelogs/rusagent.adoc[rusagent Changelog]

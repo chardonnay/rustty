@@ -1,0 +1,97 @@
+= RusTTY
+:toc:
+:toclevels: 2
+
+RusTTY is a Rust-first reimplementation plan for the PuTTY tool suite.
+The repository starts with a documented bootstrap workspace so every future
+feature branch inherits the same rules for branching, documentation, release
+discipline, and legal attribution.
+
+== Project Goals
+
+* Rebuild the PuTTY user experience in Rust with a shared core and compact,
+  separate binaries.
+* Keep compatibility import paths for PuTTY sessions and key material while
+  moving RusTTY to its own storage model.
+* Treat documentation, changelogs, and release notes as first-class build
+  inputs instead of post-release cleanup.
+* Never work directly on `main`; all changes go through named branches.
+
+== Tool Mapping
+
+[cols="1,1,3",options="header"]
+|===
+| RusTTY tool | PuTTY counterpart | Current role
+
+| `rustty`
+| `putty`
+| Cross-platform GUI terminal and session launcher.
+
+| `rusplink`
+| `plink`
+| Command-line SSH and remote execution client.
+
+| `ruscp`
+| `pscp`
+| Secure copy client for scripted and interactive transfers.
+
+| `rusftp`
+| `psftp`
+| SFTP-oriented file transfer client.
+
+| `rusagent`
+| `pageant`
+| SSH authentication agent and key broker.
+
+| `rusttygen`
+| `puttygen`
+| Key generation, conversion, and inspection tool.
+|===
+
+== Repository Workflow
+
+The branch model is documented in
+xref:docs/architecture/repository-workflow.adoc[Repository Workflow].
+In short:
+
+* `main` is the protected integration branch.
+* The initial scaffold lives on `chore/bootstrap-repo`.
+* Every behavior change must ship with matching docs, changelog entries, and
+  draft release-note updates.
+
+== Documentation Map
+
+* xref:docs/index.adoc[Documentation Index]
+* xref:docs/architecture/overview.adoc[Architecture Overview]
+* xref:docs/architecture/workspace-layout.adoc[Workspace Layout]
+* xref:docs/architecture/release-process.adoc[Release Process]
+* xref:docs/migration/putty-compatibility.adoc[PuTTY Compatibility Notes]
+* xref:docs/legal/licensing.adoc[Licensing]
+* xref:CHANGELOG.adoc[Suite Changelog]
+* xref:docs/release-notes/next.adoc[Draft Release Notes]
+
+== Bootstrap Status
+
+The workspace currently provides:
+
+* a Rust workspace with shared core and UI crates,
+* placeholder binaries for every planned tool,
+* an `xtask` utility that verifies documentation and release-note link
+  integrity, and
+* complete AsciiDoc manuals, migration notes, changelogs, and release-note
+  scaffolding.
+
+== Development Commands
+
+[source,shell]
+----
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo run -p xtask -- ci
+----
+
+== Licensing
+
+RusTTY is licensed under MIT. See link:LICENSE[LICENSE] for the RusTTY project
+license and xref:NOTICE.adoc[NOTICE.adoc] for PuTTY attribution requirements.

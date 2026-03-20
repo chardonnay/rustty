@@ -1,0 +1,62 @@
+= rustty Manual
+:toc:
+
+`rustty` is the planned cross-platform GUI terminal client for RusTTY. It
+replaces PuTTY's `putty` application.
+
+== Purpose
+
+`rustty` is intended to open interactive sessions across SSH, Telnet, Raw,
+Rlogin, and Serial transports, while also acting as the launch point for saved
+sessions and migration helpers.
+
+== Planned Capability Profile
+
+* interactive terminal sessions
+* saved session launch and editing
+* PuTTY session import into RusTTY-native storage
+* diagnostics and event-log surfaces
+* future integration with transfer and agent workflows
+
+== Usage Model
+
+The bootstrap binary currently prints a repository-aware placeholder message.
+The long-term model is a GUI launcher backed by the shared RusTTY core and
+shared UI layer.
+
+== Configuration and Storage
+
+`rustty` will read imported PuTTY sessions but should save new or updated
+configuration in RusTTY-owned storage.
+
+== Logging and Diagnostics
+
+The tool is expected to expose a human-readable event log and detailed
+diagnostic output suitable for support and regression testing.
+
+== Compatibility Notes
+
+`rustty` aims for behavioral familiarity, not a pixel-for-pixel PuTTY clone.
+Intentional differences must be recorded in changelogs and release notes.
+
+== Examples
+
+[source,text]
+----
+rustty
+----
+
+[source,text]
+----
+rustty --help
+----
+
+== Current Limits
+
+The bootstrap implementation does not yet open sessions; it establishes the
+binary name, documentation contract, and future workspace position.
+
+== Related Docs
+
+* xref:../migration/putty-compatibility.adoc[PuTTY Compatibility]
+* xref:../changelogs/rustty.adoc[rustty Changelog]

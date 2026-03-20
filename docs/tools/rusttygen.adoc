@@ -1,0 +1,59 @@
+= rusttygen Manual
+:toc:
+
+`rusttygen` is the planned key generation and conversion tool for RusTTY. It
+replaces PuTTY's `puttygen`.
+
+== Purpose
+
+`rusttygen` is intended to generate, inspect, convert, and re-encrypt key
+material used by the wider RusTTY tool suite.
+
+== Planned Capability Profile
+
+* key generation for supported SSH algorithms
+* PuTTY PPK import and export
+* OpenSSH import and export
+* fingerprint display and comment editing
+* migration reporting for legacy key material
+
+== Usage Model
+
+The bootstrap binary currently prints a placeholder message. The future tool
+should provide a stable CLI, with any GUI workflows layered separately.
+
+== Configuration and Storage
+
+Key output should default to RusTTY expectations while still supporting
+compatible export flows where users need PuTTY or OpenSSH interoperability.
+
+== Logging and Diagnostics
+
+The tool should make KDF choices, encryption settings, fingerprint output, and
+legacy-format caveats explicit.
+
+== Compatibility Notes
+
+RusTTY should document unsupported key variants clearly and never silently drop
+security-relevant metadata during conversion.
+
+== Examples
+
+[source,text]
+----
+rusttygen --generate ed25519 --output id_rustty
+----
+
+[source,text]
+----
+rusttygen --convert legacy.ppk --output openssh.pem
+----
+
+== Current Limits
+
+The bootstrap implementation does not yet generate or convert keys.
+
+== Related Docs
+
+* xref:../migration/key-import.adoc[Key Import and Export]
+* xref:../changelogs/rusttygen.adoc[rusttygen Changelog]

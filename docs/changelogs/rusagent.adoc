@@ -1,0 +1,10 @@
+= rusagent Changelog
+
+== Unreleased
+
+[#rusagent-bootstrap-repo]
+=== Bootstrap repository
+
+* Added the `rusagent` binary scaffold.
+* Added the `rusagent` manual and documented its role as the Pageant
+  replacement.

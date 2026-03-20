@@ -1,0 +1,9 @@
+= rusplink Changelog
+
+== Unreleased
+
+[#rusplink-bootstrap-repo]
+=== Bootstrap repository
+
+* Added the `rusplink` binary scaffold.
+* Added the `rusplink` manual and documented its role as the Plink replacement.

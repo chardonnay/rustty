@@ -1,0 +1,38 @@
+= Repository Workflow
+:toc:
+
+== Branch Rules
+
+RusTTY always works through branches. Direct work on `main` is not allowed.
+
+* `main` is the protected integration branch.
+* The bootstrap scaffold is authored on `chore/bootstrap-repo`.
+* Feature work uses `feat/<area>-<short-name>`.
+* Fixes use `fix/<area>-<short-name>`.
+* Documentation-only work uses `docs/<area>-<short-name>`.
+* Repository maintenance uses `chore/<area>-<short-name>`.
+* Releases use `release/<version>`.
+* Urgent production fixes use `hotfix/<version>-<short-name>`.
+
+== Merge Expectations
+
+Every merge into `main` is expected to come from a reviewed branch and must
+include:
+
+* matching documentation updates,
+* changelog updates for affected tools or suite behavior,
+* release-note draft updates for user-visible changes, and
+* passing CI checks.
+
+== Protected Branch Intent
+
+The GitHub repository should protect `main` so accidental direct pushes are
+rejected and pull-request reviews are required. The bootstrap automation in
+this repository creates the repo with that target workflow in mind.
+
+== Practical Bootstrap Note
+
+An empty GitHub repository cannot receive a pull-request-based merge until a
+base branch exists. RusTTY therefore seeds `main` from the reviewed bootstrap
+branch tip during initial publication, after all authored work has happened on
+`chore/bootstrap-repo`.

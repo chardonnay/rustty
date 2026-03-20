@@ -1,0 +1,51 @@
+= Architecture Overview
+:toc:
+
+RusTTY is organized as a Rust workspace with a shared core, a shared UI layer,
+separate end-user binaries, and repository tooling that validates the
+documentation and release process.
+
+== Design Principles
+
+* Keep public APIs small and explicit.
+* Separate protocol logic from UI and process-entry binaries.
+* Keep the branch workflow and documentation workflow enforceable by tooling.
+* Favor reusable metadata over hand-maintained drift between binaries and docs.
+
+== Planned Layers
+
+=== `rustty-core`
+
+The shared core crate owns product metadata, tool metadata, and the initial
+session model. Later it will also own transport abstractions, terminal state,
+agent behaviors, importers, and configuration contracts.
+
+=== `rustty-ui`
+
+The UI crate is the shared presentation layer for the future GUI client. The
+bootstrap implementation stays lightweight and intentionally does not commit the
+project to a specific widget toolkit yet.
+
+=== Application binaries
+
+Each user-facing tool is a separate binary crate that depends on the shared
+core. This keeps release artifacts compact while still allowing one source of
+truth for docs and behavior metadata.
+
+=== `xtask`
+
+`xtask` validates required AsciiDoc files, tool coverage, and release-note
+links to changelog anchors. It is intended to grow with repository governance
+needs so checks stay cross-platform and versioned with the codebase.
+
+== Compatibility Scope
+
+The repository is designed around broad PuTTY-suite parity over time:
+
+* SSH, SCP, SFTP, port forwarding
+* Telnet, Raw, Rlogin, Serial
+* Session import and key import/export
+* Agent and key-management tooling
+
+RusTTY intentionally does not copy PuTTY's C file layout. Compatibility is a
+behavior and migration goal, not a source-structure goal.

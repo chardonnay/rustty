@@ -1,0 +1,60 @@
+= ruscp Manual
+:toc:
+
+`ruscp` is the planned secure-copy client for RusTTY. It replaces PuTTY's
+`pscp`.
+
+== Purpose
+
+`ruscp` is intended for straightforward file copy operations over SSH with a
+CLI suited to both interactive use and automation.
+
+== Planned Capability Profile
+
+* local-to-remote copies
+* remote-to-local copies
+* recursive transfers
+* session-based configuration reuse
+* logging and diagnostics for failed or partial transfers
+
+== Usage Model
+
+The bootstrap binary currently prints a placeholder message. The future tool
+should remain a dedicated file-copy client instead of collapsing into a generic
+SSH subcommand surface.
+
+== Configuration and Storage
+
+Session references should allow reuse of RusTTY host, identity, and forwarding
+defaults without re-entering details for every copy job.
+
+== Logging and Diagnostics
+
+`ruscp` should make transfer outcomes explicit, especially around permissions,
+partial copies, path resolution, and protocol negotiation.
+
+== Compatibility Notes
+
+Where RusTTY diverges from `pscp`, migration guidance must describe the new
+behavior and any flag-level differences.
+
+== Examples
+
+[source,text]
+----
+ruscp local-file.txt user@example.com:/tmp/local-file.txt
+----
+
+[source,text]
+----
+ruscp --recursive build/ user@example.com:/srv/build/
+----
+
+== Current Limits
+
+The bootstrap implementation does not yet transfer files.
+
+== Related Docs
+
+* xref:../migration/putty-compatibility.adoc[PuTTY Compatibility]
+* xref:../changelogs/ruscp.adoc[ruscp Changelog]

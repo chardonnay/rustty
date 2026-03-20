@@ -1,0 +1,31 @@
+= Release Process
+:toc:
+
+Release notes are treated as structured inputs to the release build rather than
+as marketing text written after the fact.
+
+== Files
+
+* `CHANGELOG.adoc` records suite-level milestones.
+* `docs/changelogs/*.adoc` record per-tool implementation history.
+* `docs/release-notes/next.adoc` records the draft release narrative for the
+  next cut.
+* `docs/release-notes/<version>.adoc` stores the versioned release notes that
+  later build and publishing steps can consume.
+
+== Required Update Flow
+
+When a branch introduces a user-visible change, it must:
+
+. update the relevant tool changelog,
+. update the suite changelog when the change matters at product level,
+. add or revise a corresponding release-note entry, and
+. link the release-note entry to the matching changelog anchor.
+
+== Release Branches
+
+Release preparation happens on `release/<version>` branches. During a release:
+
+* `docs/release-notes/next.adoc` is curated into the target version file,
+* the versioned release note becomes the canonical build input, and
+* post-release work begins a fresh `next.adoc` draft.

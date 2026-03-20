@@ -1,0 +1,16 @@
+[package]
+name = "ruscp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "RusTTY secure-copy bootstrap binary."
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rustty-core.workspace = true

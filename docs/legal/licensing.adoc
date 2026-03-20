@@ -1,0 +1,24 @@
+= Licensing
+:toc:
+
+== RusTTY Project License
+
+RusTTY is licensed under MIT. The canonical project license text lives at
+link:../../LICENSE[LICENSE].
+
+== Upstream Attribution
+
+RusTTY is designed to interoperate with and, over time, reimplement behavior
+from PuTTY. Any code, fixtures, formats, or adapted material derived from PuTTY
+must preserve the relevant PuTTY attribution and permission notice.
+
+The project-wide attribution record lives at xref:../../NOTICE.adoc[NOTICE.adoc].
+
+== Working Rule
+
+When adding material derived from PuTTY:
+
+* keep the upstream notice intact,
+* document provenance in the affected file or nearby docs,
+* mention the compatibility work in changelogs and release notes, and
+* avoid presenting derived material as wholly original RusTTY work.

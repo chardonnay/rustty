@@ -114,6 +114,26 @@ impl DynamicForwardSpec {
     }
 }
 
+/// A requested remote port-forwarding rule.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RemoteForwardSpec {
+    /// Remote bind endpoint.
+    pub source: String,
+    /// Local target endpoint reached from the RusTTY client.
+    pub target: String,
+}
+
+impl RemoteForwardSpec {
+    /// Creates a new remote-forwarding rule.
+    #[must_use]
+    pub fn new(source: impl Into<String>, target: impl Into<String>) -> Self {
+        Self {
+            source: source.into(),
+            target: target.into(),
+        }
+    }
+}
+
 /// A normalized RusTTY session description.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SessionConfig {
@@ -140,6 +160,9 @@ pub struct SessionConfig {
     /// Requested forwarding rules.
     #[serde(default)]
     pub port_forwards: Vec<PortForwardSpec>,
+    /// Requested remote-forwarding rules.
+    #[serde(default)]
+    pub remote_forwards: Vec<RemoteForwardSpec>,
     /// Requested dynamic SOCKS forwarding listeners.
     #[serde(default)]
     pub dynamic_forwards: Vec<DynamicForwardSpec>,
@@ -161,6 +184,7 @@ impl SessionConfig {
             host_key_policy: HostKeyPolicy::Ask,
             saved_in: StorageFormat::Rustty,
             port_forwards: Vec::new(),
+            remote_forwards: Vec::new(),
             dynamic_forwards: Vec::new(),
         }
     }
@@ -211,6 +235,12 @@ impl SessionConfig {
     pub fn add_port_forward(&mut self, source: impl Into<String>, target: impl Into<String>) {
         self.port_forwards
             .push(PortForwardSpec::new(source, target));
+    }
+
+    /// Adds a remote-forwarding rule to the session.
+    pub fn add_remote_forward(&mut self, source: impl Into<String>, target: impl Into<String>) {
+        self.remote_forwards
+            .push(RemoteForwardSpec::new(source, target));
     }
 
     /// Adds a dynamic-forwarding listener to the session.
@@ -284,6 +314,16 @@ mod tests {
         assert_eq!(session.port_forwards.len(), 1);
         assert_eq!(session.port_forwards[0].source, "127.0.0.1:15432");
         assert_eq!(session.port_forwards[0].target, "db.internal:5432");
+    }
+
+    #[test]
+    fn session_can_store_remote_forward_rules() {
+        let mut session = SessionConfig::new("prod", Protocol::Ssh);
+        session.add_remote_forward("127.0.0.1:15432", "127.0.0.1:5432");
+
+        assert_eq!(session.remote_forwards.len(), 1);
+        assert_eq!(session.remote_forwards[0].source, "127.0.0.1:15432");
+        assert_eq!(session.remote_forwards[0].target, "127.0.0.1:5432");
     }
 
     #[test]

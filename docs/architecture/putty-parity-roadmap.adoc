@@ -23,12 +23,12 @@ branches can continue to work through the same queue without losing context.
 * remote `exec` requests and interactive shell sessions with remote PTY
 
 [#roadmap-rusplink-forwarding]
-=== 2. rusplink port forwarding (`in_progress`)
+=== 2. rusplink port forwarding (`done`)
 
 * local port forwarding (`done`)
 * saved local forwarding rules in RusTTY sessions (`done`)
 * dynamic forwarding and SOCKS-style tunnels (`done`)
-* remote port forwarding (`next`)
+* remote port forwarding (`done`)
 
 [#roadmap-rusplink-advanced-auth]
 === 3. rusplink advanced SSH auth and compatibility (`next`)

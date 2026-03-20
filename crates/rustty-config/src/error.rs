@@ -104,6 +104,10 @@ pub enum ValidationError {
     EmptySessionPortForwardTarget(String, usize),
     /// A stored session dynamic-forward listener is empty.
     EmptySessionDynamicForwardListen(String, usize),
+    /// A stored session remote-forward source is empty.
+    EmptySessionRemoteForwardSource(String, usize),
+    /// A stored session remote-forward target is empty.
+    EmptySessionRemoteForwardTarget(String, usize),
     /// Multiple sessions share the same name.
     DuplicateSessionName(String),
     /// The config repeats a tool profile binary name.
@@ -169,6 +173,18 @@ impl fmt::Display for ValidationError {
                 write!(
                     formatter,
                     "RusTTY session '{session_name}' uses an empty dynamic_forwards[{index}].listen"
+                )
+            }
+            Self::EmptySessionRemoteForwardSource(session_name, index) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' uses an empty remote_forwards[{index}].source"
+                )
+            }
+            Self::EmptySessionRemoteForwardTarget(session_name, index) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' uses an empty remote_forwards[{index}].target"
                 )
             }
             Self::DuplicateSessionName(session_name) => {

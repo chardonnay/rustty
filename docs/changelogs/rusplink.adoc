@@ -2,6 +2,16 @@
 
 == Unreleased
 
+[#rusplink-remote-forwarding]
+=== Remote port forwarding
+
+* Added `--remote-forward SOURCE=TARGET` so `rusplink` can request remote TCP
+  listeners over the active SSH connection.
+* Added SSH `tcpip-forward` setup plus bridging for incoming
+  `forwarded-tcpip` channels back to client-side local targets.
+* Added dry-run and saved-session visibility for reusable remote-forward
+  rules.
+
 [#rusplink-dynamic-forwarding]
 === Dynamic SOCKS forwarding
 

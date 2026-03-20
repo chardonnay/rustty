@@ -19,6 +19,7 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 * OpenSSH private-key authentication with optional passphrase indirection
 * password-authenticated SSH exec transport for remote commands
 * local TCP port forwarding through SSH `direct-tcpip`
+* remote TCP forwarding through SSH `tcpip-forward`
 * dynamic SOCKS5 forwarding through SSH `direct-tcpip`
 * interactive SSH shell transport with remote PTY allocation
 * OpenSSH-style known-host lookup and append-only persistence
@@ -28,7 +29,6 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 == Planned Capability Profile
 
 * SSH command execution
-* remote port forwarding
 * richer session and authentication settings
 * compatibility-oriented import of legacy PuTTY sessions
 
@@ -45,6 +45,8 @@ The bootstrap CLI is already scriptable and explicit:
 * `TARGET --dry-run` resolves a direct SSH target into the same plan format.
 * `--local-forward SOURCE=TARGET` adds a local listener that tunnels TCP
   traffic through the SSH server.
+* `--remote-forward SOURCE=TARGET` adds a remote listener that tunnels TCP
+  traffic back to the local RusTTY client.
 * `--dynamic-forward [HOST:]PORT` adds a local SOCKS5 listener that opens SSH
   TCP tunnels on demand.
 * `TARGET -- COMMAND...` or `--session NAME -- COMMAND...` executes a remote
@@ -55,8 +57,9 @@ The bootstrap CLI is already scriptable and explicit:
 Live transport already supports both remote command execution and interactive
 shells. Public keys and passwords are read through explicit CLI or session
 configuration, and host keys are resolved through RusTTY's explicit
-known-hosts flow. Local TCP and dynamic SOCKS listeners stay active for the
-lifetime of the SSH session and share the same authenticated connection.
+known-hosts flow. Local TCP, remote TCP, and dynamic SOCKS listeners stay
+active for the lifetime of the SSH session and share the same authenticated
+connection.
 
 == Configuration and Storage
 
@@ -74,6 +77,10 @@ those values automatically unless the caller overrides them with `--username`,
 Saved RusTTY sessions can also carry reusable local forwarding rules through
 `port_forwards`. CLI-provided `--local-forward` values are appended to those
 saved rules for the current invocation.
+
+Saved RusTTY sessions can also carry reusable remote forwarding rules through
+`remote_forwards`. CLI-provided `--remote-forward` values are appended to
+those saved rules for the current invocation.
 
 Saved RusTTY sessions can also carry reusable dynamic SOCKS listeners through
 `dynamic_forwards`. CLI-provided `--dynamic-forward` values are appended to
@@ -128,8 +135,8 @@ hostnames are preserved on disk but are not used as trust matches yet.
 
 == Port Forwarding
 
-The current bootstrap transport supports local TCP forwarding and dynamic
-SOCKS5 forwarding.
+The current bootstrap transport supports local TCP forwarding, remote TCP
+forwarding, and dynamic SOCKS5 forwarding.
 
 * `--local-forward SOURCE=TARGET` can be repeated.
 * `SOURCE` accepts either `port` or `host:port`.
@@ -137,17 +144,23 @@ SOCKS5 forwarding.
 * Bare local ports bind to `127.0.0.1`.
 * IPv6 hosts can be written as bracketed endpoints such as
   `[::1]:18080=[2001:db8::20]:8080`.
+* `--remote-forward SOURCE=TARGET` can be repeated.
+* `SOURCE` accepts either `port` or `host:port`.
+* `TARGET` must be `host:port`.
+* Bare remote source ports bind to `127.0.0.1` on the SSH server side.
 * `--dynamic-forward [HOST:]PORT` can be repeated.
 * Bare dynamic-forward ports bind to `127.0.0.1`.
 * Dynamic forwarding currently supports SOCKS5 `CONNECT` requests for IPv4,
   IPv6, and DNS-style destinations.
 
 Forwarding rules are visible in dry-run output as `port_forward_N=SOURCE->TARGET`.
+Remote forwarding rules are visible in dry-run output as
+`remote_forward_N=SOURCE->TARGET`.
 Dynamic listeners are visible in dry-run output as
 `dynamic_forward_N=LISTEN_ADDRESS`.
 Saved RusTTY session forwards are merged with CLI forwards so long-lived
-session definitions can keep common tunnels and local SOCKS listeners in one
-place.
+session definitions can keep common local tunnels, remote tunnels, and local
+SOCKS listeners in one place.
 
 == Logging and Diagnostics
 
@@ -157,9 +170,9 @@ ordered authentication methods, private-key path, key-passphrase source,
 password source, host-key policy, transport host-key mode, storage origin, and
 forwarding metadata. Session listings now also expose stored usernames,
 private-key paths, key-passphrase environment variable names, password
-environment variable names, plus port-forward and dynamic-forward counts so
-operators can review reusable auth defaults without opening the TOML file
-manually.
+environment variable names, plus local-forward, remote-forward, and
+dynamic-forward counts so operators can review reusable auth defaults without
+opening the TOML file manually.
 
 == Compatibility Notes
 
@@ -225,12 +238,22 @@ rusplink ops@example.com --local-forward 15432=db.internal:5432 --dry-run
 
 [source,text]
 ----
+rusplink ops@example.com --remote-forward 15432=127.0.0.1:5432 --dry-run
+----
+
+[source,text]
+----
 rusplink ops@example.com --dynamic-forward 1080 --dry-run
 ----
 
 [source,text]
 ----
 RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --local-forward 127.0.0.1:18080=127.0.0.1:80 --unsafe-accept-host-key
+----
+
+[source,text]
+----
+RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --remote-forward 15432=127.0.0.1:5432 --unsafe-accept-host-key
 ----
 
 [source,text]
@@ -251,7 +274,6 @@ Current bootstrap limits include:
 * `--config` is only used for `--session` and `--list-sessions`
 * bootstrap public-key auth currently expects OpenSSH private-key files; PuTTY
   PPK loading is not implemented yet
-* remote SSH forwarding is not implemented yet
 * dynamic forwarding currently supports SOCKS5 `CONNECT`, not `BIND` or
   `UDP ASSOCIATE`
 * agent auth and keyboard-interactive auth are not implemented yet

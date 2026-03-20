@@ -9,6 +9,7 @@ pub use product::{
     REPOSITORY_URL, SUITE_CHANGELOG_PATH,
 };
 pub use session::{
-    DynamicForwardSpec, HostKeyPolicy, PortForwardSpec, Protocol, SessionConfig, StorageFormat,
+    DynamicForwardSpec, HostKeyPolicy, PortForwardSpec, Protocol, RemoteForwardSpec, SessionConfig,
+    StorageFormat,
 };
 pub use tools::{ALL_TOOLS, ToolKind, ToolSpec, tool_spec};

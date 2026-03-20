@@ -103,6 +103,19 @@ pub struct SshDynamicForwardSpec {
     pub listen_port: u16,
 }
 
+/// A remotely listening SSH port-forwarding rule.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshRemoteForwardSpec {
+    /// Remote bind host.
+    pub listen_host: String,
+    /// Remote bind port.
+    pub listen_port: u16,
+    /// Local target host reached from the RusTTY client.
+    pub target_host: String,
+    /// Local target port reached from the RusTTY client.
+    pub target_port: u16,
+}
+
 /// A request to run a single remote command over SSH.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SshExecRequest {
@@ -118,6 +131,8 @@ pub struct SshExecRequest {
     pub command: String,
     /// Requested local forwarding listeners to keep open during the SSH session.
     pub local_forwards: Vec<SshLocalForwardSpec>,
+    /// Requested remote forwarding listeners to keep open during the SSH session.
+    pub remote_forwards: Vec<SshRemoteForwardSpec>,
     /// Requested dynamic SOCKS listeners to keep open during the SSH session.
     pub dynamic_forwards: Vec<SshDynamicForwardSpec>,
     /// Host-key handling mode for this request.
@@ -141,6 +156,8 @@ pub struct SshShellRequest {
     pub terminal_size: TerminalSize,
     /// Requested local forwarding listeners to keep open during the SSH session.
     pub local_forwards: Vec<SshLocalForwardSpec>,
+    /// Requested remote forwarding listeners to keep open during the SSH session.
+    pub remote_forwards: Vec<SshRemoteForwardSpec>,
     /// Requested dynamic SOCKS listeners to keep open during the SSH session.
     pub dynamic_forwards: Vec<SshDynamicForwardSpec>,
     /// Host-key handling mode for this request.
@@ -216,6 +233,20 @@ pub enum TransportError {
         /// Underlying accept error.
         source: io::Error,
     },
+    /// Registering a remote forwarding listener on the SSH server failed.
+    RemoteForwardRequest {
+        /// Remote bind address that failed.
+        address: String,
+        /// Underlying SSH request error.
+        source: russh::Error,
+    },
+    /// The SSH server returned a remote forwarded port outside the TCP range.
+    RemoteForwardAssignedPort {
+        /// Remote bind address that was requested.
+        address: String,
+        /// Assigned remote port returned by the SSH server.
+        port: u32,
+    },
     /// The request does not contain a command.
     MissingCommand,
     /// All configured authentication methods were rejected by the server.
@@ -259,6 +290,18 @@ impl fmt::Display for TransportError {
                 write!(
                     formatter,
                     "local forward listener {address} failed while accepting a connection: {source}"
+                )
+            }
+            Self::RemoteForwardRequest { address, source } => {
+                write!(
+                    formatter,
+                    "failed to request remote forward {address}: {source}"
+                )
+            }
+            Self::RemoteForwardAssignedPort { address, port } => {
+                write!(
+                    formatter,
+                    "remote forward {address} returned unsupported assigned port {port}"
                 )
             }
             Self::MissingCommand => write!(formatter, "missing remote command for SSH exec"),
@@ -307,9 +350,11 @@ impl std::error::Error for TransportError {
             | Self::LocalIo(source)
             | Self::LocalForwardBind { source, .. }
             | Self::LocalForwardAccept { source, .. } => Some(source),
+            Self::RemoteForwardRequest { source, .. } => Some(source),
             Self::Russh(source) => Some(source),
             Self::PrivateKeyLoad { source, .. } => Some(source),
             Self::MissingCommand
+            | Self::RemoteForwardAssignedPort { .. }
             | Self::AuthenticationRejected
             | Self::MissingAuthentication
             | Self::MissingExitStatus
@@ -336,16 +381,25 @@ pub fn run_interactive_shell(request: &SshShellRequest) -> Result<SshShellResult
 async fn async_execute_ssh_command(
     request: &SshExecRequest,
 ) -> Result<SshExecResult, TransportError> {
+    let (forward_request_sender, forward_connection_requests) = mpsc::unbounded_channel();
     let (mut session, verified_host_key) = connect_authenticated_session(
         &request.host,
         request.port,
         &request.username,
         &request.authentication_methods,
         &request.host_key_check,
+        forward_request_sender.clone(),
     )
     .await?;
-    let mut forward_runtime =
-        ForwardRuntime::start(&request.local_forwards, &request.dynamic_forwards).await?;
+    let mut forward_runtime = ForwardRuntime::start(
+        &session,
+        &request.local_forwards,
+        &request.remote_forwards,
+        &request.dynamic_forwards,
+        forward_request_sender,
+        forward_connection_requests,
+    )
+    .await?;
 
     let mut channel = session
         .channel_open_session()
@@ -420,16 +474,25 @@ async fn async_execute_ssh_command(
 async fn async_run_interactive_shell(
     request: &SshShellRequest,
 ) -> Result<SshShellResult, TransportError> {
+    let (forward_request_sender, forward_connection_requests) = mpsc::unbounded_channel();
     let (mut session, verified_host_key) = connect_authenticated_session(
         &request.host,
         request.port,
         &request.username,
         &request.authentication_methods,
         &request.host_key_check,
+        forward_request_sender.clone(),
     )
     .await?;
-    let mut forward_runtime =
-        ForwardRuntime::start(&request.local_forwards, &request.dynamic_forwards).await?;
+    let mut forward_runtime = ForwardRuntime::start(
+        &session,
+        &request.local_forwards,
+        &request.remote_forwards,
+        &request.dynamic_forwards,
+        forward_request_sender,
+        forward_connection_requests,
+    )
+    .await?;
 
     let mut channel = session
         .channel_open_session()
@@ -571,6 +634,7 @@ async fn connect_authenticated_session(
     username: &str,
     authentication_methods: &[SshAuthentication],
     host_key_check: &HostKeyCheck,
+    forward_request_sender: mpsc::UnboundedSender<ForwardConnectionRequest>,
 ) -> Result<(client::Handle<ClientHandler>, VerifiedHostKey), TransportError> {
     let config = Arc::new(client::Config {
         inactivity_timeout: Some(Duration::from_secs(30)),
@@ -580,6 +644,7 @@ async fn connect_authenticated_session(
     let state = Arc::new(Mutex::new(HostKeyState::default()));
     let handler = ClientHandler {
         host_key_check: host_key_check.clone(),
+        forward_request_sender,
         state: Arc::clone(&state),
     };
 
@@ -731,22 +796,29 @@ struct ForwardRuntime {
     error_sender: mpsc::UnboundedSender<TransportError>,
     accept_tasks: JoinSet<()>,
     bridge_tasks: JoinSet<()>,
+    remote_forwards: Vec<RegisteredRemoteForward>,
 }
 
 impl ForwardRuntime {
     async fn start(
+        session: &client::Handle<ClientHandler>,
         local_forwards: &[SshLocalForwardSpec],
+        remote_forwards: &[SshRemoteForwardSpec],
         dynamic_forwards: &[SshDynamicForwardSpec],
+        request_sender: mpsc::UnboundedSender<ForwardConnectionRequest>,
+        connection_requests: mpsc::UnboundedReceiver<ForwardConnectionRequest>,
     ) -> Result<Self, TransportError> {
-        let (request_sender, connection_requests) = mpsc::unbounded_channel();
         let (error_sender, errors) = mpsc::unbounded_channel();
         let mut runtime = Self {
-            enabled: !(local_forwards.is_empty() && dynamic_forwards.is_empty()),
+            enabled: !(local_forwards.is_empty()
+                && remote_forwards.is_empty()
+                && dynamic_forwards.is_empty()),
             connection_requests,
             errors,
             error_sender: error_sender.clone(),
             accept_tasks: JoinSet::new(),
             bridge_tasks: JoinSet::new(),
+            remote_forwards: Vec::new(),
         };
 
         for local_forward in local_forwards {
@@ -756,6 +828,12 @@ impl ForwardRuntime {
                     &request_sender,
                     &error_sender,
                 )
+                .await?;
+        }
+
+        for remote_forward in remote_forwards {
+            runtime
+                .register_remote_forward(session, remote_forward)
                 .await?;
         }
 
@@ -792,7 +870,7 @@ impl ForwardRuntime {
                 match listener.accept().await {
                     Ok((stream, originator_address)) => {
                         if request_sender
-                            .send(ForwardConnectionRequest {
+                            .send(ForwardConnectionRequest::LocalSocket {
                                 kind: listener_spec.connection_kind(),
                                 stream,
                                 originator_address,
@@ -813,6 +891,69 @@ impl ForwardRuntime {
             }
         });
         Ok(())
+    }
+
+    async fn register_remote_forward(
+        &mut self,
+        session: &client::Handle<ClientHandler>,
+        remote_forward: &SshRemoteForwardSpec,
+    ) -> Result<(), TransportError> {
+        let requested_address = render_socket_endpoint(
+            remote_forward.listen_host.as_str(),
+            remote_forward.listen_port,
+        );
+        let assigned_port = session
+            .tcpip_forward(
+                remote_forward.listen_host.clone(),
+                u32::from(remote_forward.listen_port),
+            )
+            .await
+            .map_err(|source| TransportError::RemoteForwardRequest {
+                address: requested_address.clone(),
+                source,
+            })?;
+        let listen_port = if assigned_port == 0 {
+            remote_forward.listen_port
+        } else {
+            u16::try_from(assigned_port).map_err(|_| TransportError::RemoteForwardAssignedPort {
+                address: requested_address,
+                port: assigned_port,
+            })?
+        };
+
+        self.remote_forwards.push(RegisteredRemoteForward {
+            listen_host: remote_forward.listen_host.clone(),
+            listen_port,
+            target_host: remote_forward.target_host.clone(),
+            target_port: remote_forward.target_port,
+        });
+        Ok(())
+    }
+
+    fn find_remote_forward_target(
+        &self,
+        connected_address: &str,
+        connected_port: u32,
+    ) -> Option<RegisteredRemoteForward> {
+        let connected_port = u16::try_from(connected_port).ok()?;
+
+        if let Some(remote_forward) = self.remote_forwards.iter().find(|remote_forward| {
+            remote_forward.listen_host == connected_address
+                && remote_forward.listen_port == connected_port
+        }) {
+            return Some(remote_forward.clone());
+        }
+
+        let mut matches = self
+            .remote_forwards
+            .iter()
+            .filter(|remote_forward| remote_forward.listen_port == connected_port);
+        let first = matches.next()?;
+        if matches.next().is_none() {
+            Some(first.clone())
+        } else {
+            None
+        }
     }
 }
 
@@ -859,10 +1000,27 @@ enum ForwardConnectionKind {
     Dynamic(SshDynamicForwardSpec),
 }
 
-struct ForwardConnectionRequest {
-    kind: ForwardConnectionKind,
-    stream: TcpStream,
-    originator_address: SocketAddr,
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RegisteredRemoteForward {
+    listen_host: String,
+    listen_port: u16,
+    target_host: String,
+    target_port: u16,
+}
+
+struct IncomingRemoteForwardChannel {
+    channel: russh::Channel<client::Msg>,
+    connected_address: String,
+    connected_port: u32,
+}
+
+enum ForwardConnectionRequest {
+    LocalSocket {
+        kind: ForwardConnectionKind,
+        stream: TcpStream,
+        originator_address: SocketAddr,
+    },
+    RemoteChannel(IncomingRemoteForwardChannel),
 }
 
 async fn open_forward_channel(
@@ -870,25 +1028,29 @@ async fn open_forward_channel(
     forward_request: ForwardConnectionRequest,
     forward_runtime: &mut ForwardRuntime,
 ) -> Result<(), TransportError> {
-    match forward_request.kind {
-        ForwardConnectionKind::Local(local_forward) => {
-            open_local_forward_channel(
-                session,
-                local_forward,
-                forward_request.stream,
-                forward_request.originator_address,
-                forward_runtime,
-            )
-            .await
-        }
-        ForwardConnectionKind::Dynamic(_dynamic_forward) => {
-            open_dynamic_forward_channel(
-                session,
-                forward_request.stream,
-                forward_request.originator_address,
-                forward_runtime,
-            )
-            .await
+    match forward_request {
+        ForwardConnectionRequest::LocalSocket {
+            kind,
+            stream,
+            originator_address,
+        } => match kind {
+            ForwardConnectionKind::Local(local_forward) => {
+                open_local_forward_channel(
+                    session,
+                    local_forward,
+                    stream,
+                    originator_address,
+                    forward_runtime,
+                )
+                .await
+            }
+            ForwardConnectionKind::Dynamic(_dynamic_forward) => {
+                open_dynamic_forward_channel(session, stream, originator_address, forward_runtime)
+                    .await
+            }
+        },
+        ForwardConnectionRequest::RemoteChannel(remote_channel) => {
+            open_remote_forward_channel(remote_channel, forward_runtime).await
         }
     }
 }
@@ -954,6 +1116,36 @@ async fn open_dynamic_forward_channel(
         .map_err(TransportError::LocalIo)?;
     forward_runtime.bridge_tasks.spawn(async move {
         let _ = bridge_forward_stream(stream, channel).await;
+    });
+    Ok(())
+}
+
+async fn open_remote_forward_channel(
+    remote_channel: IncomingRemoteForwardChannel,
+    forward_runtime: &mut ForwardRuntime,
+) -> Result<(), TransportError> {
+    let Some(target) = forward_runtime.find_remote_forward_target(
+        remote_channel.connected_address.as_str(),
+        remote_channel.connected_port,
+    ) else {
+        let _ = remote_channel.channel.close().await;
+        return Ok(());
+    };
+
+    let target_address = render_socket_endpoint(target.target_host.as_str(), target.target_port);
+    let stream = match TcpStream::connect(target_address.as_str()).await {
+        Ok(stream) => stream,
+        Err(_) => {
+            let _ = remote_channel.channel.close().await;
+            return Ok(());
+        }
+    };
+
+    let error_sender = forward_runtime.error_sender.clone();
+    forward_runtime.bridge_tasks.spawn(async move {
+        if let Err(error) = bridge_forward_stream(stream, remote_channel.channel).await {
+            let _ = error_sender.send(error);
+        }
     });
     Ok(())
 }
@@ -1156,6 +1348,7 @@ struct HostKeyMismatch {
 
 struct ClientHandler {
     host_key_check: HostKeyCheck,
+    forward_request_sender: mpsc::UnboundedSender<ForwardConnectionRequest>,
     state: Arc<Mutex<HostKeyState>>,
 }
 
@@ -1200,6 +1393,29 @@ impl client::Handler for ClientHandler {
             }
         }
     }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let request = ForwardConnectionRequest::RemoteChannel(IncomingRemoteForwardChannel {
+            channel,
+            connected_address: connected_address.to_owned(),
+            connected_port,
+        });
+        if let Err(error) = self.forward_request_sender.send(request) {
+            let ForwardConnectionRequest::RemoteChannel(remote_channel) = error.0 else {
+                unreachable!("client handler only sends remote forward channels");
+            };
+            let _ = remote_channel.channel.close().await;
+        }
+        Ok(())
+    }
 }
 
 struct RawModeGuard;
@@ -1236,8 +1452,8 @@ mod tests {
     use super::{
         HostKeyCheck, SOCKS_ADDRESS_DOMAIN, SOCKS_ADDRESS_IPV4, SOCKS_ADDRESS_IPV6,
         SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshLocalForwardSpec,
-        TerminalSize, TransportError, VerifiedHostKeySource, decode_socks5_host,
-        execute_ssh_command,
+        SshRemoteForwardSpec, TerminalSize, TransportError, VerifiedHostKeySource,
+        decode_socks5_host, execute_ssh_command,
     };
 
     #[test]
@@ -1251,6 +1467,7 @@ mod tests {
             }],
             command: "   ".to_owned(),
             local_forwards: Vec::new(),
+            remote_forwards: Vec::new(),
             dynamic_forwards: Vec::new(),
             host_key_check: HostKeyCheck::AcceptAny,
         };
@@ -1339,6 +1556,21 @@ mod tests {
 
         assert_eq!(forward.listen_host, "127.0.0.1");
         assert_eq!(forward.listen_port, 1080);
+    }
+
+    #[test]
+    fn remote_forward_spec_is_plain_data() {
+        let forward = SshRemoteForwardSpec {
+            listen_host: "127.0.0.1".to_owned(),
+            listen_port: 15432,
+            target_host: "127.0.0.1".to_owned(),
+            target_port: 5432,
+        };
+
+        assert_eq!(forward.listen_host, "127.0.0.1");
+        assert_eq!(forward.listen_port, 15432);
+        assert_eq!(forward.target_host, "127.0.0.1");
+        assert_eq!(forward.target_port, 5432);
     }
 
     #[test]

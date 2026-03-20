@@ -70,6 +70,16 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Tightened config validation so empty saved dynamic-forward listener fields
   are rejected before runtime.
 
+[#suite-rusplink-remote-forwarding]
+=== rusplink remote port forwarding
+
+* Added reusable saved remote-forward rules to the RusTTY session flow.
+* Added `rusplink` support for CLI-defined and session-defined SSH
+  `tcpip-forward` listeners that bridge incoming remote connections back to
+  client-side local targets.
+* Tightened config validation so empty saved remote-forward source or target
+  fields are rejected before runtime.
+
 [#suite-rusplink-ssh-transport]
 === rusplink SSH transport
 

@@ -179,6 +179,17 @@ impl AppConfig {
                 }
             }
 
+            for (index, dynamic_forward) in
+                stored_session.session.dynamic_forwards.iter().enumerate()
+            {
+                if dynamic_forward.listen.is_empty() {
+                    return Err(ValidationError::EmptySessionDynamicForwardListen(
+                        stored_session.session.name.clone(),
+                        index,
+                    ));
+                }
+            }
+
             let is_new = seen_session_names.insert(stored_session.session.name.clone());
             if !is_new {
                 return Err(ValidationError::DuplicateSessionName(
@@ -287,7 +298,7 @@ impl From<ToolSpec> for ToolProfile {
 mod tests {
     use super::{AppConfig, ImportSource, StoredSession, ToolProfile};
     use crate::error::ValidationError;
-    use rustty_core::{Protocol, SessionConfig};
+    use rustty_core::{DynamicForwardSpec, Protocol, SessionConfig};
 
     #[test]
     fn sample_config_has_expected_counts() {
@@ -471,6 +482,24 @@ mod tests {
         assert_eq!(
             config.validate(),
             Err(ValidationError::EmptySessionPortForwardTarget(
+                "broken".to_owned(),
+                0
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_dynamic_forward_listener() {
+        let mut config = AppConfig::sample();
+        let mut session = SessionConfig::new("broken", Protocol::Ssh)
+            .with_host("broken.example")
+            .with_password_env("RUSTTY_BROKEN_PASSWORD");
+        session.dynamic_forwards.push(DynamicForwardSpec::new(""));
+        config.add_session(StoredSession::new(session));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionDynamicForwardListen(
                 "broken".to_owned(),
                 0
             ))

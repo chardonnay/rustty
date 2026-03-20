@@ -24,6 +24,7 @@ The initial configuration crate models:
 * optional per-session SSH username, private-key path, key-passphrase
   environment variable, and password-environment defaults,
 * optional per-session SSH local port-forward definitions,
+* optional per-session SSH dynamic-forward listeners,
 * optional import provenance for migrated sessions, and
 * a per-tool profile list derived from the shared tool metadata table.
 
@@ -33,7 +34,8 @@ load them deterministically by name. Empty stored SSH usernames and empty
 rejected during validation so bootstrap CLIs do not have to guess how to
 recover from malformed auth defaults. `key_passphrase_env` is also rejected
 when no `private_key_path` is present. Empty saved local port-forward source or
-target strings are also rejected during validation.
+target strings are also rejected during validation. Empty saved
+dynamic-forward listeners are rejected during validation as well.
 
 == Sample Configuration
 
@@ -74,6 +76,18 @@ The current bootstrap interpretation is local forwarding only. `rusplink`
 normalizes a bare `source` port such as `15432` to `127.0.0.1:15432` before it
 reaches the SSH transport layer.
 
+== Dynamic Forward Storage
+
+RusTTY stores saved dynamic SOCKS listeners as `listen` endpoints inside
+`dynamic_forwards`.
+
+* `listen` accepts either `port` or `host:port`
+* bare listener ports normalize to `127.0.0.1:PORT`
+
+The current bootstrap interpretation is SOCKS5 `CONNECT` tunneling only.
+`rusplink` uses those listeners to accept local SOCKS connections and opens
+matching SSH `direct-tcpip` channels for the requested targets.
+
 == Default Config Path Policy
 
 RusTTY resolves the default config file by platform:
@@ -97,8 +111,9 @@ config schema and on-disk validation path.
 
 The same config schema can now also be consumed by `rusplink` for session
 listing, SSH dry-run planning, and live bootstrap transport with either
-password or public-key authentication. Saved local port-forwards are now also
-loaded into `rusplink` execution plans and live SSH sessions.
+password or public-key authentication. Saved local port-forwards and dynamic
+forward listeners are now also loaded into `rusplink` execution plans and live
+SSH sessions.
 
 == Known-Hosts Path Policy
 

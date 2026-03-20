@@ -8,5 +8,7 @@ pub use product::{
     BOOTSTRAP_BRANCH, DEFAULT_BRANCH, NEXT_RELEASE_NOTES_PATH, PRODUCT_NAME, REPOSITORY_SLUG,
     REPOSITORY_URL, SUITE_CHANGELOG_PATH,
 };
-pub use session::{HostKeyPolicy, PortForwardSpec, Protocol, SessionConfig, StorageFormat};
+pub use session::{
+    DynamicForwardSpec, HostKeyPolicy, PortForwardSpec, Protocol, SessionConfig, StorageFormat,
+};
 pub use tools::{ALL_TOOLS, ToolKind, ToolSpec, tool_spec};

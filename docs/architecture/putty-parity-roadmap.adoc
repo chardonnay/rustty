@@ -27,8 +27,8 @@ branches can continue to work through the same queue without losing context.
 
 * local port forwarding (`done`)
 * saved local forwarding rules in RusTTY sessions (`done`)
+* dynamic forwarding and SOCKS-style tunnels (`done`)
 * remote port forwarding (`next`)
-* dynamic forwarding and SOCKS-style tunnels (`next`)
 
 [#roadmap-rusplink-advanced-auth]
 === 3. rusplink advanced SSH auth and compatibility (`next`)

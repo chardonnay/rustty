@@ -3,7 +3,7 @@
 mod ssh;
 
 pub use ssh::{
-    HostKeyCheck, SshAuthentication, SshExecRequest, SshExecResult, SshLocalForwardSpec,
-    SshShellRequest, SshShellResult, TerminalSize, TransportError, VerifiedHostKey,
-    VerifiedHostKeySource, execute_ssh_command, run_interactive_shell,
+    HostKeyCheck, SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshExecResult,
+    SshLocalForwardSpec, SshShellRequest, SshShellResult, TerminalSize, TransportError,
+    VerifiedHostKey, VerifiedHostKeySource, execute_ssh_command, run_interactive_shell,
 };

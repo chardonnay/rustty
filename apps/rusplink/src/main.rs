@@ -9,10 +9,10 @@ use rustty_config::{
     AppConfig, ImportSource, StoredSession, default_config_path, default_known_hosts_path,
     load_config, load_known_host_keys, persist_known_host_key,
 };
-use rustty_core::{HostKeyPolicy, PortForwardSpec, Protocol, StorageFormat};
+use rustty_core::{DynamicForwardSpec, HostKeyPolicy, PortForwardSpec, Protocol, StorageFormat};
 use rustty_transport::{
-    HostKeyCheck, SshAuthentication, SshExecRequest, SshLocalForwardSpec, SshShellRequest,
-    TerminalSize, VerifiedHostKey, VerifiedHostKeySource, execute_ssh_command,
+    HostKeyCheck, SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshLocalForwardSpec,
+    SshShellRequest, TerminalSize, VerifiedHostKey, VerifiedHostKeySource, execute_ssh_command,
     run_interactive_shell,
 };
 
@@ -26,16 +26,18 @@ Usage:
   rusplink --show-default-known-hosts-path
   rusplink --list-sessions [--config PATH]
   rusplink --list-sessions --config=PATH
-  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session=NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
-  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session=NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
 
 Notes:
   TARGET supports host, user@host, host:port, and [ipv6-host]:port forms.
   --local-forward SPEC uses SOURCE=TARGET, for example:
   127.0.0.1:15432=db.internal:5432 or 8080=127.0.0.1:80.
+  --dynamic-forward SPEC uses [HOST:]PORT, for example:
+  1080 or 127.0.0.1:1080.
   Live SSH execution supports OpenSSH private keys and password authentication.
   If both are configured, rusplink tries public-key auth first and falls back
   to password authentication only if the server rejects the key.
@@ -67,6 +69,7 @@ struct PlanRequest {
     key_passphrase_env_override: Option<String>,
     password_env_override: Option<String>,
     local_forward_overrides: Vec<PortForwardSpec>,
+    dynamic_forward_overrides: Vec<DynamicForwardSpec>,
     unsafe_accept_host_key: bool,
 }
 
@@ -96,6 +99,7 @@ struct ConnectionPlan {
     remote_command: Vec<String>,
     host_key_policy: HostKeyPolicy,
     port_forwards: Vec<PortForwardSpec>,
+    dynamic_forwards: Vec<DynamicForwardSpec>,
     saved_in: Option<StorageFormat>,
     imported_from: Option<ImportSource>,
     private_key_path: Option<PathBuf>,
@@ -194,6 +198,7 @@ where
     let mut key_passphrase_env_override = None;
     let mut password_env_override = None;
     let mut local_forward_overrides = Vec::new();
+    let mut dynamic_forward_overrides = Vec::new();
     let mut unsafe_accept_host_key = false;
     let mut known_hosts_path = None;
 
@@ -308,6 +313,13 @@ where
                 local_forward_overrides.push(parse_local_forward_spec(raw_spec)?);
                 index += 1;
             }
+            "--dynamic-forward" => {
+                let raw_spec = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| usage_error("missing value for --dynamic-forward"))?;
+                dynamic_forward_overrides.push(parse_dynamic_forward_spec(raw_spec)?);
+                index += 1;
+            }
             "--" => {
                 remote_command.extend(arguments[(index + 1)..].iter().cloned());
                 break;
@@ -360,6 +372,8 @@ where
                     )?;
                 } else if let Some(raw_spec) = argument.strip_prefix("--local-forward=") {
                     local_forward_overrides.push(parse_local_forward_spec(raw_spec)?);
+                } else if let Some(raw_spec) = argument.strip_prefix("--dynamic-forward=") {
+                    dynamic_forward_overrides.push(parse_dynamic_forward_spec(raw_spec)?);
                 } else if matches!(argument.as_str(), "--help" | "-h") {
                     return Err(usage_error(
                         "help must be requested without other arguments",
@@ -394,6 +408,7 @@ where
             || key_passphrase_env_override.is_some()
             || password_env_override.is_some()
             || !local_forward_overrides.is_empty()
+            || !dynamic_forward_overrides.is_empty()
             || unsafe_accept_host_key
         {
             return Err(usage_error(
@@ -419,6 +434,7 @@ where
             || key_passphrase_env_override.is_some()
             || password_env_override.is_some()
             || !local_forward_overrides.is_empty()
+            || !dynamic_forward_overrides.is_empty()
             || unsafe_accept_host_key
         {
             return Err(usage_error(
@@ -440,6 +456,7 @@ where
             || key_passphrase_env_override.is_some()
             || password_env_override.is_some()
             || !local_forward_overrides.is_empty()
+            || !dynamic_forward_overrides.is_empty()
             || unsafe_accept_host_key
             || known_hosts_path.is_some()
         {
@@ -467,6 +484,7 @@ where
             key_passphrase_env_override,
             password_env_override,
             local_forward_overrides,
+            dynamic_forward_overrides,
             unsafe_accept_host_key,
         }))),
         (None, Some(target)) => {
@@ -488,6 +506,7 @@ where
                 key_passphrase_env_override,
                 password_env_override,
                 local_forward_overrides,
+                dynamic_forward_overrides,
                 unsafe_accept_host_key,
             })))
         }
@@ -520,7 +539,7 @@ where
     writeln!(writer, "config_path={}", config_path.display()).map_err(|error| error.to_string())?;
     writeln!(
         writer,
-        "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tport_forwards\timported_from"
+        "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tport_forwards\tdynamic_forwards\timported_from"
     )
     .map_err(|error| error.to_string())?;
 
@@ -533,10 +552,11 @@ where
         let private_key_path = session.private_key_path.as_deref().unwrap_or("-");
         let key_passphrase_env = session.key_passphrase_env.as_deref().unwrap_or("-");
         let port_forwards = session.port_forwards.len();
+        let dynamic_forwards = session.dynamic_forwards.len();
         let imported_from = render_import_source(stored_session.imported_from);
         writeln!(
             writer,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             session.name,
             session.protocol.label(),
             host,
@@ -546,6 +566,7 @@ where
             private_key_path,
             key_passphrase_env,
             port_forwards,
+            dynamic_forwards,
             imported_from
         )
         .map_err(|error| error.to_string())?;
@@ -617,6 +638,8 @@ fn build_session_plan(
     )?;
     let mut port_forwards = session.port_forwards.clone();
     port_forwards.extend(request.local_forward_overrides.clone());
+    let mut dynamic_forwards = session.dynamic_forwards.clone();
+    dynamic_forwards.extend(request.dynamic_forward_overrides.clone());
 
     Ok(ConnectionPlan {
         origin: PlanOrigin::Session,
@@ -633,6 +656,7 @@ fn build_session_plan(
         remote_command: request.remote_command.clone(),
         host_key_policy: session.host_key_policy,
         port_forwards,
+        dynamic_forwards,
         saved_in: Some(session.saved_in),
         imported_from: stored_session.imported_from,
         private_key_path,
@@ -683,6 +707,7 @@ fn build_direct_plan(
         remote_command: request.remote_command.clone(),
         host_key_policy: HostKeyPolicy::Ask,
         port_forwards: request.local_forward_overrides.clone(),
+        dynamic_forwards: request.dynamic_forward_overrides.clone(),
         saved_in: None,
         imported_from: None,
         private_key_path,
@@ -705,6 +730,7 @@ where
     let username = resolve_execution_username(plan.username.as_deref())?;
     let authentication_methods = resolve_authentication_methods(plan)?;
     let local_forwards = resolve_local_forward_specs(&plan.port_forwards)?;
+    let dynamic_forwards = resolve_dynamic_forward_specs(&plan.dynamic_forwards)?;
 
     if plan.remote_command.is_empty() {
         let request = SshShellRequest {
@@ -715,6 +741,7 @@ where
             term_type: resolve_term_type(),
             terminal_size: resolve_terminal_size()?,
             local_forwards,
+            dynamic_forwards,
             host_key_check,
         };
         let result = run_interactive_shell(&request)
@@ -730,6 +757,7 @@ where
         authentication_methods,
         command: render_remote_command(&plan.remote_command),
         local_forwards,
+        dynamic_forwards,
         host_key_check,
     };
     let result = execute_ssh_command(&request)
@@ -834,6 +862,8 @@ where
     .map_err(|error| error.to_string())?;
     writeln!(writer, "port_forwards={}", plan.port_forwards.len())
         .map_err(|error| error.to_string())?;
+    writeln!(writer, "dynamic_forwards={}", plan.dynamic_forwards.len())
+        .map_err(|error| error.to_string())?;
 
     for (index, port_forward) in plan.port_forwards.iter().enumerate() {
         writeln!(
@@ -842,6 +872,11 @@ where
             port_forward.source, port_forward.target
         )
         .map_err(|error| error.to_string())?;
+    }
+
+    for (index, dynamic_forward) in plan.dynamic_forwards.iter().enumerate() {
+        writeln!(writer, "dynamic_forward_{index}={}", dynamic_forward.listen)
+            .map_err(|error| error.to_string())?;
     }
 
     Ok(())
@@ -923,6 +958,15 @@ fn resolve_local_forward_specs(
         .collect()
 }
 
+fn resolve_dynamic_forward_specs(
+    dynamic_forwards: &[DynamicForwardSpec],
+) -> Result<Vec<SshDynamicForwardSpec>, String> {
+    dynamic_forwards
+        .iter()
+        .map(parse_saved_dynamic_forward_spec)
+        .collect()
+}
+
 fn parse_local_forward_spec(raw_spec: &str) -> Result<PortForwardSpec, String> {
     let (source, target) = raw_spec
         .split_once('=')
@@ -931,7 +975,7 @@ fn parse_local_forward_spec(raw_spec: &str) -> Result<PortForwardSpec, String> {
         return Err(usage_error(local_forward_usage_message(raw_spec)));
     }
 
-    let (listen_host, listen_port) = parse_local_forward_source(source)?;
+    let (listen_host, listen_port) = parse_forward_listener(source, "--local-forward source")?;
     let (target_host, target_port) = parse_required_endpoint(target, "--local-forward target")?;
     Ok(PortForwardSpec::new(
         render_endpoint(listen_host.as_str(), listen_port),
@@ -939,16 +983,28 @@ fn parse_local_forward_spec(raw_spec: &str) -> Result<PortForwardSpec, String> {
     ))
 }
 
+fn parse_dynamic_forward_spec(raw_spec: &str) -> Result<DynamicForwardSpec, String> {
+    let (listen_host, listen_port) = parse_forward_listener(raw_spec, "--dynamic-forward listener")
+        .map_err(|_| usage_error(dynamic_forward_usage_message(raw_spec)))?;
+    Ok(DynamicForwardSpec::new(render_endpoint(
+        listen_host.as_str(),
+        listen_port,
+    )))
+}
+
 fn parse_saved_local_forward_spec(
     port_forward: &PortForwardSpec,
 ) -> Result<SshLocalForwardSpec, String> {
-    let (listen_host, listen_port) = parse_local_forward_source(port_forward.source.as_str())
-        .map_err(|error| {
-            format!(
-                "invalid RusTTY local port-forward source '{}': {error}",
-                port_forward.source
-            )
-        })?;
+    let (listen_host, listen_port) = parse_forward_listener(
+        port_forward.source.as_str(),
+        "RusTTY local port-forward source",
+    )
+    .map_err(|error| {
+        format!(
+            "invalid RusTTY local port-forward source '{}': {error}",
+            port_forward.source
+        )
+    })?;
     let (target_host, target_port) = parse_required_endpoint(
         port_forward.target.as_str(),
         "RusTTY local port-forward target",
@@ -968,12 +1024,32 @@ fn parse_saved_local_forward_spec(
     })
 }
 
-fn parse_local_forward_source(raw_source: &str) -> Result<(String, u16), String> {
+fn parse_saved_dynamic_forward_spec(
+    dynamic_forward: &DynamicForwardSpec,
+) -> Result<SshDynamicForwardSpec, String> {
+    let (listen_host, listen_port) = parse_forward_listener(
+        dynamic_forward.listen.as_str(),
+        "RusTTY dynamic-forward listener",
+    )
+    .map_err(|error| {
+        format!(
+            "invalid RusTTY dynamic-forward listener '{}': {error}",
+            dynamic_forward.listen
+        )
+    })?;
+
+    Ok(SshDynamicForwardSpec {
+        listen_host,
+        listen_port,
+    })
+}
+
+fn parse_forward_listener(raw_source: &str, label: &str) -> Result<(String, u16), String> {
     if let Ok(port) = raw_source.parse::<u16>() {
         return Ok(("127.0.0.1".to_owned(), port));
     }
 
-    parse_required_endpoint(raw_source, "--local-forward source")
+    parse_required_endpoint(raw_source, label)
 }
 
 fn parse_required_endpoint(raw_endpoint: &str, label: &str) -> Result<(String, u16), String> {
@@ -1351,6 +1427,12 @@ fn local_forward_usage_message(raw_spec: &str) -> String {
     )
 }
 
+fn dynamic_forward_usage_message(raw_spec: &str) -> String {
+    format!(
+        "invalid --dynamic-forward specification: {raw_spec}; expected [HOST:]PORT such as 1080 or 127.0.0.1:1080"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1359,7 +1441,7 @@ mod tests {
     };
 
     use rustty_config::{AppConfig, StoredSession, save_config};
-    use rustty_core::{PortForwardSpec, Protocol, SessionConfig};
+    use rustty_core::{DynamicForwardSpec, PortForwardSpec, Protocol, SessionConfig};
 
     use super::{
         Command, DEFAULT_PASSWORD_ENV, DirectTarget, PlanRequest, RunOutcome, SshAuthentication,
@@ -1422,6 +1504,7 @@ mod tests {
                 key_passphrase_env_override: None,
                 password_env_override: Some("RUSTTY_TEST_PASSWORD".to_owned()),
                 local_forward_overrides: Vec::new(),
+                dynamic_forward_overrides: Vec::new(),
                 unsafe_accept_host_key: true,
             })))
         );
@@ -1448,6 +1531,7 @@ mod tests {
                 key_passphrase_env_override: Some("RUSTTY_TEST_KEY_PASSPHRASE".to_owned()),
                 password_env_override: None,
                 local_forward_overrides: Vec::new(),
+                dynamic_forward_overrides: Vec::new(),
                 unsafe_accept_host_key: false,
             })))
         );
@@ -1481,6 +1565,38 @@ mod tests {
                     "127.0.0.1:15432",
                     "db.internal:5432",
                 )],
+                dynamic_forward_overrides: Vec::new(),
+                unsafe_accept_host_key: false,
+            })))
+        );
+    }
+
+    #[test]
+    fn parses_direct_target_with_dynamic_forward_flags() {
+        assert_eq!(
+            parse_command([
+                "ops@example.com".to_owned(),
+                "--dynamic-forward".to_owned(),
+                "1080".to_owned(),
+                "--dry-run".to_owned(),
+            ]),
+            Ok(Command::Plan(Box::new(PlanRequest {
+                config_path: None,
+                known_hosts_path: None,
+                target: InvocationTarget::Direct(DirectTarget {
+                    username: Some("ops".to_owned()),
+                    host: "example.com".to_owned(),
+                    port: None,
+                }),
+                port_override: None,
+                dry_run: true,
+                remote_command: Vec::new(),
+                username_override: None,
+                private_key_path_override: None,
+                key_passphrase_env_override: None,
+                password_env_override: None,
+                local_forward_overrides: Vec::new(),
+                dynamic_forward_overrides: vec![DynamicForwardSpec::new("127.0.0.1:1080")],
                 unsafe_accept_host_key: false,
             })))
         );
@@ -1517,6 +1633,7 @@ mod tests {
                 key_passphrase_env_override: None,
                 password_env_override: None,
                 local_forward_overrides: Vec::new(),
+                dynamic_forward_overrides: Vec::new(),
                 unsafe_accept_host_key: false,
             })))
         );
@@ -1568,11 +1685,11 @@ mod tests {
         assert!(output.contains("config_path="));
         assert!(
             output.contains(
-                "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tport_forwards\timported_from"
+                "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tport_forwards\tdynamic_forwards\timported_from"
             )
         );
         assert!(output.contains(
-            "example-ssh\tSSH\texample.com\t22\tops\tRUSTTY_EXAMPLE_SSH_PASSWORD\t-\t-\t0\t-"
+            "example-ssh\tSSH\texample.com\t22\tops\tRUSTTY_EXAMPLE_SSH_PASSWORD\t-\t-\t0\t0\t-"
         ));
         assert!(error_output.is_empty());
     }
@@ -1609,6 +1726,7 @@ mod tests {
         assert!(output.contains("key_passphrase_env=-"));
         assert!(output.contains("password_env=RUSTTY_EXAMPLE_SSH_PASSWORD"));
         assert!(output.contains("port_forwards=0"));
+        assert!(output.contains("dynamic_forwards=0"));
         assert!(error_output.is_empty());
     }
 
@@ -1696,6 +1814,7 @@ mod tests {
         assert!(output.contains("command=hostname"));
         assert!(output.contains(&format!("config_path={}", config_path.display())));
         assert!(output.contains("port_forwards=0"));
+        assert!(output.contains("dynamic_forwards=0"));
         assert!(error_output.is_empty());
     }
 
@@ -1732,6 +1851,7 @@ mod tests {
         assert!(output.contains("password_env=RUSTTY_TEST_PASSWORD"));
         assert!(output.contains("command=uptime"));
         assert!(output.contains("port_forwards=0"));
+        assert!(output.contains("dynamic_forwards=0"));
         assert!(error_output.is_empty());
     }
 
@@ -1762,6 +1882,36 @@ mod tests {
         assert!(output.contains("port_forwards=2"));
         assert!(output.contains("port_forward_0=127.0.0.1:15432->db.internal:5432"));
         assert!(output.contains("port_forward_1=[::1]:18080->[2001:db8::20]:8080"));
+        assert!(error_output.is_empty());
+    }
+
+    #[test]
+    fn dry_run_prints_resolved_dynamic_forwards() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let mut output = Vec::new();
+        let mut error_output = Vec::new();
+
+        let outcome = run(
+            [
+                "ops@example.com".to_owned(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
+                "--dynamic-forward".to_owned(),
+                "1080".to_owned(),
+                "--dynamic-forward".to_owned(),
+                "[::1]:2080".to_owned(),
+                "--dry-run".to_owned(),
+            ],
+            &mut output,
+            &mut error_output,
+        )
+        .expect("dynamic forwarding dry-run should succeed");
+
+        assert_eq!(outcome, RunOutcome::Success);
+        let output = String::from_utf8(output).expect("output should be valid UTF-8");
+        assert!(output.contains("dynamic_forwards=2"));
+        assert!(output.contains("dynamic_forward_0=127.0.0.1:1080"));
+        assert!(output.contains("dynamic_forward_1=[::1]:2080"));
         assert!(error_output.is_empty());
     }
 
@@ -1798,6 +1948,42 @@ mod tests {
         let output = String::from_utf8(output).expect("output should be valid UTF-8");
         assert!(output.contains("port_forwards=1"));
         assert!(output.contains("port_forward_0=127.0.0.1:15432->db.internal:5432"));
+        assert!(error_output.is_empty());
+    }
+
+    #[test]
+    fn session_dry_run_includes_saved_dynamic_forwards() {
+        let mut config = AppConfig::sample();
+        let mut session = SessionConfig::new("dynamic-forwarding", Protocol::Ssh)
+            .with_host("forwarding.example")
+            .with_username("ops")
+            .with_password_env("RUSTTY_FORWARD_PASSWORD");
+        session.add_dynamic_forward("127.0.0.1:1080");
+        config.add_session(StoredSession::new(session));
+        let config_path = write_config(config);
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let mut output = Vec::new();
+        let mut error_output = Vec::new();
+
+        let outcome = run(
+            [
+                "--session".to_owned(),
+                "dynamic-forwarding".to_owned(),
+                "--config".to_owned(),
+                config_path.display().to_string(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
+                "--dry-run".to_owned(),
+            ],
+            &mut output,
+            &mut error_output,
+        )
+        .expect("session dynamic forwarding dry-run should succeed");
+
+        assert_eq!(outcome, RunOutcome::Success);
+        let output = String::from_utf8(output).expect("output should be valid UTF-8");
+        assert!(output.contains("dynamic_forwards=1"));
+        assert!(output.contains("dynamic_forward_0=127.0.0.1:1080"));
         assert!(error_output.is_empty());
     }
 
@@ -1930,6 +2116,7 @@ mod tests {
             remote_command: vec!["uptime".to_owned()],
             host_key_policy: rustty_core::HostKeyPolicy::Ask,
             port_forwards: Vec::new(),
+            dynamic_forwards: Vec::new(),
             saved_in: None,
             imported_from: None,
             private_key_path: None,
@@ -1974,6 +2161,7 @@ mod tests {
             remote_command: vec!["uptime".to_owned()],
             host_key_policy: rustty_core::HostKeyPolicy::Ask,
             port_forwards: Vec::new(),
+            dynamic_forwards: Vec::new(),
             saved_in: None,
             imported_from: None,
             private_key_path: Some(PathBuf::from("/tmp/id_ed25519")),

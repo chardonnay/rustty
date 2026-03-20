@@ -2,6 +2,16 @@
 
 == Unreleased
 
+[#rusplink-dynamic-forwarding]
+=== Dynamic SOCKS forwarding
+
+* Added `--dynamic-forward [HOST:]PORT` so `rusplink` can open local SOCKS5
+  listeners on the active SSH connection.
+* Added SOCKS5 `CONNECT` handling for IPv4, IPv6, and DNS-style destination
+  targets over SSH `direct-tcpip`.
+* Added dry-run and saved-session visibility for reusable dynamic-forward
+  listeners.
+
 [#rusplink-local-forwarding]
 === Local port forwarding
 

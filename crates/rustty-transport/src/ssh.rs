@@ -2,7 +2,7 @@
 
 use std::{
     fmt, io,
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
@@ -17,7 +17,21 @@ use tokio::{
     net::{TcpListener, TcpStream},
     sync::mpsc,
     task::JoinSet,
+    time::timeout,
 };
+
+const SOCKS_VERSION: u8 = 0x05;
+const SOCKS_NO_AUTHENTICATION: u8 = 0x00;
+const SOCKS_NO_ACCEPTABLE_METHODS: u8 = 0xff;
+const SOCKS_COMMAND_CONNECT: u8 = 0x01;
+const SOCKS_ADDRESS_IPV4: u8 = 0x01;
+const SOCKS_ADDRESS_DOMAIN: u8 = 0x03;
+const SOCKS_ADDRESS_IPV6: u8 = 0x04;
+const SOCKS_REPLY_SUCCEEDED: u8 = 0x00;
+const SOCKS_REPLY_GENERAL_FAILURE: u8 = 0x01;
+const SOCKS_REPLY_COMMAND_NOT_SUPPORTED: u8 = 0x07;
+const SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
+const DYNAMIC_FORWARD_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Host-key handling mode for the current transport attempt.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -80,6 +94,15 @@ pub struct SshLocalForwardSpec {
     pub target_port: u16,
 }
 
+/// A locally listening dynamic SOCKS forwarding rule.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SshDynamicForwardSpec {
+    /// Local bind host.
+    pub listen_host: String,
+    /// Local bind port.
+    pub listen_port: u16,
+}
+
 /// A request to run a single remote command over SSH.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SshExecRequest {
@@ -95,6 +118,8 @@ pub struct SshExecRequest {
     pub command: String,
     /// Requested local forwarding listeners to keep open during the SSH session.
     pub local_forwards: Vec<SshLocalForwardSpec>,
+    /// Requested dynamic SOCKS listeners to keep open during the SSH session.
+    pub dynamic_forwards: Vec<SshDynamicForwardSpec>,
     /// Host-key handling mode for this request.
     pub host_key_check: HostKeyCheck,
 }
@@ -116,6 +141,8 @@ pub struct SshShellRequest {
     pub terminal_size: TerminalSize,
     /// Requested local forwarding listeners to keep open during the SSH session.
     pub local_forwards: Vec<SshLocalForwardSpec>,
+    /// Requested dynamic SOCKS listeners to keep open during the SSH session.
+    pub dynamic_forwards: Vec<SshDynamicForwardSpec>,
     /// Host-key handling mode for this request.
     pub host_key_check: HostKeyCheck,
 }
@@ -317,7 +344,8 @@ async fn async_execute_ssh_command(
         &request.host_key_check,
     )
     .await?;
-    let mut local_forward_runtime = LocalForwardRuntime::start(&request.local_forwards).await?;
+    let mut forward_runtime =
+        ForwardRuntime::start(&request.local_forwards, &request.dynamic_forwards).await?;
 
     let mut channel = session
         .channel_open_session()
@@ -334,10 +362,10 @@ async fn async_execute_ssh_command(
 
     loop {
         tokio::select! {
-            Some(forward_request) = local_forward_runtime.connection_requests.recv(), if local_forward_runtime.enabled => {
-                open_local_forward_channel(&session, forward_request, &mut local_forward_runtime).await?;
+            Some(forward_request) = forward_runtime.connection_requests.recv(), if forward_runtime.enabled => {
+                open_forward_channel(&session, forward_request, &mut forward_runtime).await?;
             }
-            Some(forward_error) = local_forward_runtime.errors.recv(), if local_forward_runtime.enabled => {
+            Some(forward_error) = forward_runtime.errors.recv(), if forward_runtime.enabled => {
                 return Err(forward_error);
             }
             maybe_message = channel.wait() => {
@@ -400,7 +428,8 @@ async fn async_run_interactive_shell(
         &request.host_key_check,
     )
     .await?;
-    let mut local_forward_runtime = LocalForwardRuntime::start(&request.local_forwards).await?;
+    let mut forward_runtime =
+        ForwardRuntime::start(&request.local_forwards, &request.dynamic_forwards).await?;
 
     let mut channel = session
         .channel_open_session()
@@ -461,10 +490,10 @@ async fn async_run_interactive_shell(
                         .map_err(TransportError::Russh)?;
                 }
             }
-            Some(forward_request) = local_forward_runtime.connection_requests.recv(), if local_forward_runtime.enabled => {
-                open_local_forward_channel(&session, forward_request, &mut local_forward_runtime).await?;
+            Some(forward_request) = forward_runtime.connection_requests.recv(), if forward_runtime.enabled => {
+                open_forward_channel(&session, forward_request, &mut forward_runtime).await?;
             }
-            Some(forward_error) = local_forward_runtime.errors.recv(), if local_forward_runtime.enabled => {
+            Some(forward_error) = forward_runtime.errors.recv(), if forward_runtime.enabled => {
                 return Err(forward_error);
             }
             maybe_message = channel.wait() => {
@@ -499,10 +528,10 @@ async fn async_run_interactive_shell(
                     Err(source) => return Err(TransportError::LocalIo(source)),
                 }
             }
-            Some(forward_request) = local_forward_runtime.connection_requests.recv(), if local_forward_runtime.enabled => {
-                open_local_forward_channel(&session, forward_request, &mut local_forward_runtime).await?;
+            Some(forward_request) = forward_runtime.connection_requests.recv(), if forward_runtime.enabled => {
+                open_forward_channel(&session, forward_request, &mut forward_runtime).await?;
             }
-            Some(forward_error) = local_forward_runtime.errors.recv(), if local_forward_runtime.enabled => {
+            Some(forward_error) = forward_runtime.errors.recv(), if forward_runtime.enabled => {
                 return Err(forward_error);
             }
             maybe_message = channel.wait() => {
@@ -695,7 +724,7 @@ async fn disconnect_session(session: &mut client::Handle<ClientHandler>, reason:
         .await;
 }
 
-struct LocalForwardRuntime {
+struct ForwardRuntime {
     enabled: bool,
     connection_requests: mpsc::UnboundedReceiver<ForwardConnectionRequest>,
     errors: mpsc::UnboundedReceiver<TransportError>,
@@ -704,12 +733,15 @@ struct LocalForwardRuntime {
     bridge_tasks: JoinSet<()>,
 }
 
-impl LocalForwardRuntime {
-    async fn start(local_forwards: &[SshLocalForwardSpec]) -> Result<Self, TransportError> {
+impl ForwardRuntime {
+    async fn start(
+        local_forwards: &[SshLocalForwardSpec],
+        dynamic_forwards: &[SshDynamicForwardSpec],
+    ) -> Result<Self, TransportError> {
         let (request_sender, connection_requests) = mpsc::unbounded_channel();
         let (error_sender, errors) = mpsc::unbounded_channel();
         let mut runtime = Self {
-            enabled: !local_forwards.is_empty(),
+            enabled: !(local_forwards.is_empty() && dynamic_forwards.is_empty()),
             connection_requests,
             errors,
             error_sender: error_sender.clone(),
@@ -718,87 +750,215 @@ impl LocalForwardRuntime {
         };
 
         for local_forward in local_forwards {
-            let listen_address = render_socket_endpoint(
-                local_forward.listen_host.as_str(),
-                local_forward.listen_port,
-            );
-            let listener = TcpListener::bind(listen_address.as_str())
-                .await
-                .map_err(|source| TransportError::LocalForwardBind {
-                    address: listen_address.clone(),
-                    source,
-                })?;
-            let local_forward = local_forward.clone();
-            let request_sender = request_sender.clone();
-            let error_sender = error_sender.clone();
-            runtime.accept_tasks.spawn(async move {
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, originator_address)) => {
-                            if request_sender
-                                .send(ForwardConnectionRequest {
-                                    local_forward: local_forward.clone(),
-                                    stream,
-                                    originator_address,
-                                })
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        Err(source) => {
-                            let _ = error_sender.send(TransportError::LocalForwardAccept {
-                                address: listen_address.clone(),
-                                source,
-                            });
-                            break;
-                        }
-                    }
-                }
-            });
+            runtime
+                .spawn_listener(
+                    ForwardListenerSpec::Local(local_forward.clone()),
+                    &request_sender,
+                    &error_sender,
+                )
+                .await?;
+        }
+
+        for dynamic_forward in dynamic_forwards {
+            runtime
+                .spawn_listener(
+                    ForwardListenerSpec::Dynamic(dynamic_forward.clone()),
+                    &request_sender,
+                    &error_sender,
+                )
+                .await?;
         }
 
         Ok(runtime)
     }
+
+    async fn spawn_listener(
+        &mut self,
+        listener_spec: ForwardListenerSpec,
+        request_sender: &mpsc::UnboundedSender<ForwardConnectionRequest>,
+        error_sender: &mpsc::UnboundedSender<TransportError>,
+    ) -> Result<(), TransportError> {
+        let listen_address = listener_spec.listen_address();
+        let listener = TcpListener::bind(listen_address.as_str())
+            .await
+            .map_err(|source| TransportError::LocalForwardBind {
+                address: listen_address.clone(),
+                source,
+            })?;
+        let request_sender = request_sender.clone();
+        let error_sender = error_sender.clone();
+        self.accept_tasks.spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, originator_address)) => {
+                        if request_sender
+                            .send(ForwardConnectionRequest {
+                                kind: listener_spec.connection_kind(),
+                                stream,
+                                originator_address,
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(source) => {
+                        let _ = error_sender.send(TransportError::LocalForwardAccept {
+                            address: listen_address.clone(),
+                            source,
+                        });
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(())
+    }
 }
 
-impl Drop for LocalForwardRuntime {
+impl Drop for ForwardRuntime {
     fn drop(&mut self) {
         self.accept_tasks.abort_all();
         self.bridge_tasks.abort_all();
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ForwardListenerSpec {
+    Local(SshLocalForwardSpec),
+    Dynamic(SshDynamicForwardSpec),
+}
+
+impl ForwardListenerSpec {
+    fn listen_address(&self) -> String {
+        match self {
+            Self::Local(local_forward) => render_socket_endpoint(
+                local_forward.listen_host.as_str(),
+                local_forward.listen_port,
+            ),
+            Self::Dynamic(dynamic_forward) => render_socket_endpoint(
+                dynamic_forward.listen_host.as_str(),
+                dynamic_forward.listen_port,
+            ),
+        }
+    }
+
+    fn connection_kind(&self) -> ForwardConnectionKind {
+        match self {
+            Self::Local(local_forward) => ForwardConnectionKind::Local(local_forward.clone()),
+            Self::Dynamic(dynamic_forward) => {
+                ForwardConnectionKind::Dynamic(dynamic_forward.clone())
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ForwardConnectionKind {
+    Local(SshLocalForwardSpec),
+    Dynamic(SshDynamicForwardSpec),
+}
+
 struct ForwardConnectionRequest {
-    local_forward: SshLocalForwardSpec,
+    kind: ForwardConnectionKind,
     stream: TcpStream,
     originator_address: SocketAddr,
 }
 
-async fn open_local_forward_channel(
+async fn open_forward_channel(
     session: &client::Handle<ClientHandler>,
     forward_request: ForwardConnectionRequest,
-    local_forward_runtime: &mut LocalForwardRuntime,
+    forward_runtime: &mut ForwardRuntime,
+) -> Result<(), TransportError> {
+    match forward_request.kind {
+        ForwardConnectionKind::Local(local_forward) => {
+            open_local_forward_channel(
+                session,
+                local_forward,
+                forward_request.stream,
+                forward_request.originator_address,
+                forward_runtime,
+            )
+            .await
+        }
+        ForwardConnectionKind::Dynamic(_dynamic_forward) => {
+            open_dynamic_forward_channel(
+                session,
+                forward_request.stream,
+                forward_request.originator_address,
+                forward_runtime,
+            )
+            .await
+        }
+    }
+}
+
+async fn open_local_forward_channel(
+    session: &client::Handle<ClientHandler>,
+    local_forward: SshLocalForwardSpec,
+    stream: TcpStream,
+    originator_address: SocketAddr,
+    forward_runtime: &mut ForwardRuntime,
 ) -> Result<(), TransportError> {
     let channel = session
         .channel_open_direct_tcpip(
-            forward_request.local_forward.target_host.clone(),
-            u32::from(forward_request.local_forward.target_port),
-            forward_request.originator_address.ip().to_string(),
-            u32::from(forward_request.originator_address.port()),
+            local_forward.target_host,
+            u32::from(local_forward.target_port),
+            originator_address.ip().to_string(),
+            u32::from(originator_address.port()),
         )
         .await
         .map_err(TransportError::Russh)?;
-    let error_sender = local_forward_runtime.error_sender.clone();
-    local_forward_runtime.bridge_tasks.spawn(async move {
-        if let Err(error) = bridge_local_forward_stream(forward_request.stream, channel).await {
+    let error_sender = forward_runtime.error_sender.clone();
+    forward_runtime.bridge_tasks.spawn(async move {
+        if let Err(error) = bridge_forward_stream(stream, channel).await {
             let _ = error_sender.send(error);
         }
     });
     Ok(())
 }
 
-async fn bridge_local_forward_stream(
+async fn open_dynamic_forward_channel(
+    session: &client::Handle<ClientHandler>,
+    mut stream: TcpStream,
+    originator_address: SocketAddr,
+    forward_runtime: &mut ForwardRuntime,
+) -> Result<(), TransportError> {
+    let Some(target) = negotiate_socks5_target(&mut stream)
+        .await
+        .map_err(TransportError::LocalIo)?
+    else {
+        return Ok(());
+    };
+
+    let channel = match session
+        .channel_open_direct_tcpip(
+            target.host,
+            u32::from(target.port),
+            originator_address.ip().to_string(),
+            u32::from(originator_address.port()),
+        )
+        .await
+    {
+        Ok(channel) => channel,
+        Err(_) => {
+            write_socks5_connect_reply(&mut stream, SOCKS_REPLY_GENERAL_FAILURE)
+                .await
+                .map_err(TransportError::LocalIo)?;
+            return Ok(());
+        }
+    };
+
+    write_socks5_connect_reply(&mut stream, SOCKS_REPLY_SUCCEEDED)
+        .await
+        .map_err(TransportError::LocalIo)?;
+    forward_runtime.bridge_tasks.spawn(async move {
+        let _ = bridge_forward_stream(stream, channel).await;
+    });
+    Ok(())
+}
+
+async fn bridge_forward_stream(
     mut stream: TcpStream,
     channel: russh::Channel<client::Msg>,
 ) -> Result<(), TransportError> {
@@ -810,6 +970,146 @@ async fn bridge_local_forward_stream(
         .shutdown()
         .await
         .map_err(TransportError::LocalIo)
+}
+
+struct SocksConnectTarget {
+    host: String,
+    port: u16,
+}
+
+async fn negotiate_socks5_target(stream: &mut TcpStream) -> io::Result<Option<SocksConnectTarget>> {
+    let greeting = read_socks5_greeting(stream).await?;
+    let Some(methods) = greeting else {
+        return Ok(None);
+    };
+
+    if !methods.contains(&SOCKS_NO_AUTHENTICATION) {
+        write_socks5_method_selection(stream, SOCKS_NO_ACCEPTABLE_METHODS).await?;
+        return Ok(None);
+    }
+
+    write_socks5_method_selection(stream, SOCKS_NO_AUTHENTICATION).await?;
+    read_socks5_connect_target(stream).await
+}
+
+async fn read_socks5_greeting(stream: &mut TcpStream) -> io::Result<Option<Vec<u8>>> {
+    let mut header = [0_u8; 2];
+    read_socks5_exact(stream, &mut header).await?;
+    if header[0] != SOCKS_VERSION {
+        return Ok(None);
+    }
+
+    let method_count = usize::from(header[1]);
+    if method_count == 0 {
+        return Ok(Some(Vec::new()));
+    }
+
+    let mut methods = vec![0_u8; method_count];
+    read_socks5_exact(stream, &mut methods).await?;
+    Ok(Some(methods))
+}
+
+async fn read_socks5_connect_target(
+    stream: &mut TcpStream,
+) -> io::Result<Option<SocksConnectTarget>> {
+    let mut header = [0_u8; 4];
+    read_socks5_exact(stream, &mut header).await?;
+    if header[0] != SOCKS_VERSION {
+        return Ok(None);
+    }
+
+    if header[1] != SOCKS_COMMAND_CONNECT {
+        write_socks5_connect_reply(stream, SOCKS_REPLY_COMMAND_NOT_SUPPORTED).await?;
+        return Ok(None);
+    }
+
+    let address_type = header[3];
+    let mut length_prefix = None;
+    let address_length = match address_type {
+        SOCKS_ADDRESS_IPV4 => 4,
+        SOCKS_ADDRESS_DOMAIN => {
+            let mut raw_length = [0_u8; 1];
+            read_socks5_exact(stream, &mut raw_length).await?;
+            length_prefix = Some(raw_length[0]);
+            usize::from(raw_length[0])
+        }
+        SOCKS_ADDRESS_IPV6 => 16,
+        _ => {
+            write_socks5_connect_reply(stream, SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED).await?;
+            return Ok(None);
+        }
+    };
+
+    let mut address_bytes = vec![0_u8; address_length];
+    read_socks5_exact(stream, &mut address_bytes).await?;
+    let mut port_bytes = [0_u8; 2];
+    read_socks5_exact(stream, &mut port_bytes).await?;
+    let port = u16::from_be_bytes(port_bytes);
+
+    let Some(host) = decode_socks5_host(address_type, &address_bytes, length_prefix) else {
+        write_socks5_connect_reply(stream, SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED).await?;
+        return Ok(None);
+    };
+
+    Ok(Some(SocksConnectTarget { host, port }))
+}
+
+fn decode_socks5_host(
+    address_type: u8,
+    address_bytes: &[u8],
+    length_prefix: Option<u8>,
+) -> Option<String> {
+    match address_type {
+        SOCKS_ADDRESS_IPV4 => {
+            let octets: [u8; 4] = address_bytes.try_into().ok()?;
+            Some(Ipv4Addr::from(octets).to_string())
+        }
+        SOCKS_ADDRESS_DOMAIN => {
+            if length_prefix.is_some_and(|length| usize::from(length) != address_bytes.len()) {
+                return None;
+            }
+            let host = String::from_utf8(address_bytes.to_vec()).ok()?;
+            if host.is_empty() { None } else { Some(host) }
+        }
+        SOCKS_ADDRESS_IPV6 => {
+            let octets: [u8; 16] = address_bytes.try_into().ok()?;
+            Some(Ipv6Addr::from(octets).to_string())
+        }
+        _ => None,
+    }
+}
+
+async fn read_socks5_exact(stream: &mut TcpStream, buffer: &mut [u8]) -> io::Result<()> {
+    timeout(DYNAMIC_FORWARD_HANDSHAKE_TIMEOUT, stream.read_exact(buffer))
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "timed out while waiting for the SOCKS5 client handshake",
+            )
+        })?
+        .map(|_| ())
+}
+
+async fn write_socks5_method_selection(stream: &mut TcpStream, method: u8) -> io::Result<()> {
+    stream.write_all(&[SOCKS_VERSION, method]).await
+}
+
+async fn write_socks5_connect_reply(stream: &mut TcpStream, reply: u8) -> io::Result<()> {
+    stream
+        .write_all(&[
+            SOCKS_VERSION,
+            reply,
+            0x00,
+            SOCKS_ADDRESS_IPV4,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ])
+        .await
 }
 
 fn render_socket_endpoint(host: &str, port: u16) -> String {
@@ -934,8 +1234,10 @@ mod tests {
     use ssh_key::PublicKey;
 
     use super::{
-        HostKeyCheck, SshAuthentication, SshExecRequest, SshLocalForwardSpec, TerminalSize,
-        TransportError, VerifiedHostKeySource, execute_ssh_command,
+        HostKeyCheck, SOCKS_ADDRESS_DOMAIN, SOCKS_ADDRESS_IPV4, SOCKS_ADDRESS_IPV6,
+        SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshLocalForwardSpec,
+        TerminalSize, TransportError, VerifiedHostKeySource, decode_socks5_host,
+        execute_ssh_command,
     };
 
     #[test]
@@ -949,6 +1251,7 @@ mod tests {
             }],
             command: "   ".to_owned(),
             local_forwards: Vec::new(),
+            dynamic_forwards: Vec::new(),
             host_key_check: HostKeyCheck::AcceptAny,
         };
 
@@ -1025,5 +1328,40 @@ mod tests {
         assert_eq!(forward.listen_port, 8080);
         assert_eq!(forward.target_host, "db.internal");
         assert_eq!(forward.target_port, 5432);
+    }
+
+    #[test]
+    fn dynamic_forward_spec_is_plain_data() {
+        let forward = SshDynamicForwardSpec {
+            listen_host: "127.0.0.1".to_owned(),
+            listen_port: 1080,
+        };
+
+        assert_eq!(forward.listen_host, "127.0.0.1");
+        assert_eq!(forward.listen_port, 1080);
+    }
+
+    #[test]
+    fn decode_socks5_host_supports_domain_targets() {
+        let host = decode_socks5_host(
+            SOCKS_ADDRESS_DOMAIN,
+            b"db.internal",
+            Some(b"db.internal".len() as u8),
+        );
+
+        assert_eq!(host.as_deref(), Some("db.internal"));
+    }
+
+    #[test]
+    fn decode_socks5_host_supports_ip_targets() {
+        let ipv4 = decode_socks5_host(SOCKS_ADDRESS_IPV4, &[127, 0, 0, 1], None);
+        let ipv6 = decode_socks5_host(
+            SOCKS_ADDRESS_IPV6,
+            &[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            None,
+        );
+
+        assert_eq!(ipv4.as_deref(), Some("127.0.0.1"));
+        assert_eq!(ipv6.as_deref(), Some("2001:db8::1"));
     }
 }

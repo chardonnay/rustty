@@ -102,6 +102,8 @@ pub enum ValidationError {
     EmptySessionPortForwardSource(String, usize),
     /// A stored session local port-forward target is empty.
     EmptySessionPortForwardTarget(String, usize),
+    /// A stored session dynamic-forward listener is empty.
+    EmptySessionDynamicForwardListen(String, usize),
     /// Multiple sessions share the same name.
     DuplicateSessionName(String),
     /// The config repeats a tool profile binary name.
@@ -161,6 +163,12 @@ impl fmt::Display for ValidationError {
                 write!(
                     formatter,
                     "RusTTY session '{session_name}' uses an empty port_forwards[{index}].target"
+                )
+            }
+            Self::EmptySessionDynamicForwardListen(session_name, index) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' uses an empty dynamic_forwards[{index}].listen"
                 )
             }
             Self::DuplicateSessionName(session_name) => {

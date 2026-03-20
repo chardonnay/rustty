@@ -97,6 +97,23 @@ impl PortForwardSpec {
     }
 }
 
+/// A requested dynamic SOCKS forwarding listener.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DynamicForwardSpec {
+    /// Local bind endpoint in `[host]:port` or `host:port` form.
+    pub listen: String,
+}
+
+impl DynamicForwardSpec {
+    /// Creates a new dynamic-forwarding rule.
+    #[must_use]
+    pub fn new(listen: impl Into<String>) -> Self {
+        Self {
+            listen: listen.into(),
+        }
+    }
+}
+
 /// A normalized RusTTY session description.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SessionConfig {
@@ -121,7 +138,11 @@ pub struct SessionConfig {
     /// Storage origin for the session.
     pub saved_in: StorageFormat,
     /// Requested forwarding rules.
+    #[serde(default)]
     pub port_forwards: Vec<PortForwardSpec>,
+    /// Requested dynamic SOCKS forwarding listeners.
+    #[serde(default)]
+    pub dynamic_forwards: Vec<DynamicForwardSpec>,
 }
 
 impl SessionConfig {
@@ -140,6 +161,7 @@ impl SessionConfig {
             host_key_policy: HostKeyPolicy::Ask,
             saved_in: StorageFormat::Rustty,
             port_forwards: Vec::new(),
+            dynamic_forwards: Vec::new(),
         }
     }
 
@@ -189,6 +211,11 @@ impl SessionConfig {
     pub fn add_port_forward(&mut self, source: impl Into<String>, target: impl Into<String>) {
         self.port_forwards
             .push(PortForwardSpec::new(source, target));
+    }
+
+    /// Adds a dynamic-forwarding listener to the session.
+    pub fn add_dynamic_forward(&mut self, listen: impl Into<String>) {
+        self.dynamic_forwards.push(DynamicForwardSpec::new(listen));
     }
 
     /// Returns the explicit or protocol-default port.
@@ -257,5 +284,14 @@ mod tests {
         assert_eq!(session.port_forwards.len(), 1);
         assert_eq!(session.port_forwards[0].source, "127.0.0.1:15432");
         assert_eq!(session.port_forwards[0].target, "db.internal:5432");
+    }
+
+    #[test]
+    fn session_can_store_dynamic_forward_rules() {
+        let mut session = SessionConfig::new("prod", Protocol::Ssh);
+        session.add_dynamic_forward("127.0.0.1:1080");
+
+        assert_eq!(session.dynamic_forwards.len(), 1);
+        assert_eq!(session.dynamic_forwards[0].listen, "127.0.0.1:1080");
     }
 }

@@ -25,6 +25,9 @@
 * RusTTY sessions can now also carry validated saved local port-forward
   definitions for `rusplink`.
   xref:../../CHANGELOG.adoc#suite-rusplink-local-forwarding[Changelog entry]
+* RusTTY sessions can now also carry validated saved dynamic-forward listener
+  definitions for `rusplink`.
+  xref:../../CHANGELOG.adoc#suite-rusplink-dynamic-forwarding[Changelog entry]
 
 === rusplink
 
@@ -46,6 +49,9 @@
 * `rusplink` can now open local TCP forwarding listeners from either
   `--local-forward` flags or saved RusTTY session rules.
   xref:../changelogs/rusplink.adoc#rusplink-local-forwarding[Changelog entry]
+* `rusplink` can now open local SOCKS5 listeners from either
+  `--dynamic-forward` flags or saved RusTTY session rules.
+  xref:../changelogs/rusplink.adoc#rusplink-dynamic-forwarding[Changelog entry]
 * `rusplink` can now resolve a default known-hosts path, verify exact stored
   host keys, persist first-seen keys for `accept_new`, and open interactive
   SSH shells with a remote PTY.

@@ -1734,7 +1734,7 @@ mod tests {
 
     #[test]
     fn expands_home_relative_private_key_paths() {
-        let home = std::env::var("HOME").expect("HOME should be available during tests");
+        let (_, home) = configured_home_dir();
         let expanded =
             normalize_private_key_path(PathBuf::from("~/id_ed25519")).expect("path should expand");
         assert_eq!(expanded, PathBuf::from(home).join("id_ed25519"));
@@ -1744,8 +1744,7 @@ mod tests {
     fn resolve_authentication_methods_prefers_public_key_then_password() {
         let expected_password =
             std::env::var("PATH").expect("PATH should be available during tests");
-        let expected_key_passphrase =
-            std::env::var("HOME").expect("HOME should be available during tests");
+        let (home_env_var, expected_key_passphrase) = configured_home_dir();
         let plan = super::ConnectionPlan {
             origin: super::PlanOrigin::Direct,
             config_path: None,
@@ -1761,7 +1760,7 @@ mod tests {
             saved_in: None,
             imported_from: None,
             private_key_path: Some(PathBuf::from("/tmp/id_ed25519")),
-            key_passphrase_env: Some("HOME".to_owned()),
+            key_passphrase_env: Some(home_env_var.to_owned()),
             password_env_var: Some("PATH".to_owned()),
             unsafe_accept_host_key: false,
         };
@@ -1790,6 +1789,13 @@ mod tests {
             }
             SshAuthentication::PublicKey { .. } => panic!("expected password fallback second"),
         }
+    }
+
+    fn configured_home_dir() -> (&'static str, String) {
+        std::env::var("HOME")
+            .map(|value| ("HOME", value))
+            .or_else(|_| std::env::var("USERPROFILE").map(|value| ("USERPROFILE", value)))
+            .expect("HOME or USERPROFILE should be available during tests")
     }
 
     fn write_config(config: AppConfig) -> PathBuf {

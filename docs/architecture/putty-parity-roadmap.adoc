@@ -1,0 +1,110 @@
+= PuTTY Parity Roadmap
+:toc:
+
+This roadmap is the ordered implementation list for turning RusTTY into a
+practical PuTTY replacement. Items are listed in delivery order so feature
+branches can continue to work through the same queue without losing context.
+
+== Status Legend
+
+* `done`: implemented in the current bootstrap workspace
+* `next`: highest-priority missing work
+* `later`: required for full-suite parity, but intentionally deferred
+
+== Ordered Worklist
+
+[#roadmap-rusplink-auth]
+=== 1. rusplink SSH auth baseline (`done`)
+
+* password authentication via environment variables
+* OpenSSH private-key authentication with optional passphrase indirection
+* known-host verification and append-only trust-on-first-use persistence
+* remote `exec` requests and interactive shell sessions with remote PTY
+
+[#roadmap-rusplink-forwarding]
+=== 2. rusplink port forwarding (`next`)
+
+* local port forwarding
+* remote port forwarding
+* dynamic forwarding and SOCKS-style tunnels
+* saved forwarding rules in RusTTY sessions
+
+[#roadmap-rusplink-advanced-auth]
+=== 3. rusplink advanced SSH auth and compatibility (`next`)
+
+* SSH agent authentication through `rusagent`
+* PuTTY PPK loading and conversion
+* keyboard-interactive auth
+* stricter host-key UI and compatibility prompts
+
+[#roadmap-rustty-gui]
+=== 4. rustty GUI session window (`next`)
+
+* native session launcher and connection dialog
+* interactive terminal window
+* session lifecycle, resize handling, copy/paste, and scrollback
+
+[#roadmap-terminal-core]
+=== 5. terminal emulation core (`next`)
+
+* VT/ANSI control-sequence coverage
+* alternate screen and cursor-state handling
+* UTF-8, wide-character, and line-drawing behavior
+* selection and transcript expectations close to PuTTY
+
+[#roadmap-ruscp]
+=== 6. ruscp file copy client (`later`)
+
+* SCP upload and download flows
+* recursive transfer support
+* progress and failure reporting
+
+[#roadmap-rusftp]
+=== 7. rusftp file transfer client (`later`)
+
+* interactive SFTP shell
+* scripted subcommands
+* resume, directory traversal, and batch-mode behavior
+
+[#roadmap-rusagent]
+=== 8. rusagent SSH agent (`later`)
+
+* background agent service
+* signing requests for SSH clients
+* platform-specific socket or IPC integration
+
+[#roadmap-rusttygen]
+=== 9. rusttygen key management (`later`)
+
+* key generation for supported algorithms
+* OpenSSH and PuTTY-format conversion
+* fingerprint display and passphrase changes
+
+[#roadmap-non-ssh]
+=== 10. non-SSH backends (`later`)
+
+* Telnet
+* Raw TCP
+* Rlogin
+* Serial
+
+[#roadmap-import]
+=== 11. PuTTY migration paths (`later`)
+
+* PuTTY session import coverage
+* host-key import and compatibility helpers
+* OpenSSH config import improvements
+
+[#roadmap-release-hardening]
+=== 12. release hardening (`later`)
+
+* compact release profiles and size budgets
+* cross-platform packaging
+* signed release artifacts
+* build-fed release-note generation
+
+== Boundaries
+
+Exact 1:1 parity with every historical PuTTY behavior is not the immediate
+goal. RusTTY is aiming for a high-compatibility Rust replacement with explicit
+documentation wherever behavior intentionally differs from PuTTY.

@@ -19,6 +19,9 @@
 * RusTTY sessions can now store reusable SSH `username` and `password_env`
   defaults, and config validation rejects empty auth-default values.
   xref:../../CHANGELOG.adoc#suite-session-auth-defaults[Changelog entry]
+* RusTTY sessions can now also store reusable SSH `private_key_path` and
+  `key_passphrase_env` defaults for public-key login flows.
+  xref:../../CHANGELOG.adoc#suite-rusplink-public-key-auth[Changelog entry]
 
 === rusplink
 
@@ -34,6 +37,9 @@
 * `rusplink` can now consume saved session `username` and `password_env`
   defaults and surface them in session listings.
   xref:../changelogs/rusplink.adoc#rusplink-session-auth-defaults[Changelog entry]
+* `rusplink` can now authenticate with OpenSSH private keys, optional
+  passphrase indirection, and password fallback ordering.
+  xref:../changelogs/rusplink.adoc#rusplink-public-key-auth[Changelog entry]
 * `rusplink` can now resolve a default known-hosts path, verify exact stored
   host keys, persist first-seen keys for `accept_new`, and open interactive
   SSH shells with a remote PTY.

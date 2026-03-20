@@ -65,6 +65,7 @@ In short:
 * xref:docs/architecture/overview.adoc[Architecture Overview]
 * xref:docs/architecture/workspace-layout.adoc[Workspace Layout]
 * xref:docs/architecture/config-model.adoc[Configuration Model]
+* xref:docs/architecture/putty-parity-roadmap.adoc[PuTTY Parity Roadmap]
 * xref:docs/architecture/release-process.adoc[Release Process]
 * xref:docs/migration/putty-compatibility.adoc[PuTTY Compatibility Notes]
 * xref:docs/legal/licensing.adoc[Licensing]
@@ -79,7 +80,8 @@ The workspace currently provides:
 * a Rust workspace with shared core, transport, and UI crates,
 * a config bootstrap flow in `rustty`, including sample session auth defaults,
 * a session-aware `rusplink` CLI with dry-run planning, bootstrap SSH exec
-  transport, known-host persistence, and interactive shell support,
+  transport, public-key and password authentication, known-host persistence,
+  and interactive shell support,
 * placeholder binaries for the remaining planned tools,
 * an `xtask` utility that verifies documentation and release-note link
   integrity, and
@@ -103,6 +105,7 @@ cargo run -p rusplink -- --show-default-known-hosts-path
 cargo run -p rusplink -- --session example-ssh --dry-run -- hostname
 cargo run -p rusplink -- example.com --known-hosts /tmp/rustty-known_hosts --dry-run -- uptime
 RUSTTY_SSH_PASSWORD=secret cargo run -p rusplink -- ops@example.com --unsafe-accept-host-key -- uptime
+cargo run -p rusplink -- ops@example.com --private-key ~/.ssh/id_ed25519 --dry-run
 ----
 
 == Licensing

@@ -134,6 +134,36 @@ impl AppConfig {
                 ));
             }
 
+            if stored_session
+                .session
+                .private_key_path
+                .as_deref()
+                .is_some_and(str::is_empty)
+            {
+                return Err(ValidationError::EmptySessionPrivateKeyPath(
+                    stored_session.session.name.clone(),
+                ));
+            }
+
+            if stored_session
+                .session
+                .key_passphrase_env
+                .as_deref()
+                .is_some_and(str::is_empty)
+            {
+                return Err(ValidationError::EmptySessionKeyPassphraseEnv(
+                    stored_session.session.name.clone(),
+                ));
+            }
+
+            if stored_session.session.key_passphrase_env.is_some()
+                && stored_session.session.private_key_path.is_none()
+            {
+                return Err(ValidationError::DanglingSessionKeyPassphraseEnv(
+                    stored_session.session.name.clone(),
+                ));
+            }
+
             let is_new = seen_session_names.insert(stored_session.session.name.clone());
             if !is_new {
                 return Err(ValidationError::DuplicateSessionName(
@@ -339,6 +369,58 @@ mod tests {
         assert_eq!(
             config.validate(),
             Err(ValidationError::EmptySessionPasswordEnv(
+                "broken".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_private_key_path() {
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("broken", Protocol::Ssh)
+                .with_host("broken.example")
+                .with_private_key_path(""),
+        ));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionPrivateKeyPath(
+                "broken".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_key_passphrase_env() {
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("broken", Protocol::Ssh)
+                .with_host("broken.example")
+                .with_private_key_path("~/.ssh/id_ed25519")
+                .with_key_passphrase_env(""),
+        ));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionKeyPassphraseEnv(
+                "broken".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_dangling_key_passphrase_env() {
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("broken", Protocol::Ssh)
+                .with_host("broken.example")
+                .with_key_passphrase_env("RUSTTY_BROKEN_KEY_PASSPHRASE"),
+        ));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::DanglingSessionKeyPassphraseEnv(
                 "broken".to_owned()
             ))
         );

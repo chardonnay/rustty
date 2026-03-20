@@ -110,6 +110,10 @@ pub struct SessionConfig {
     pub username: Option<String>,
     /// Environment variable name that stores the session password.
     pub password_env: Option<String>,
+    /// Preferred private-key path for SSH-family sessions.
+    pub private_key_path: Option<String>,
+    /// Environment variable name that stores the private-key passphrase.
+    pub key_passphrase_env: Option<String>,
     /// Override port if different from the protocol default.
     pub port: Option<u16>,
     /// SSH host-key handling policy.
@@ -130,6 +134,8 @@ impl SessionConfig {
             host: None,
             username: None,
             password_env: None,
+            private_key_path: None,
+            key_passphrase_env: None,
             port: None,
             host_key_policy: HostKeyPolicy::Ask,
             saved_in: StorageFormat::Rustty,
@@ -155,6 +161,20 @@ impl SessionConfig {
     #[must_use]
     pub fn with_password_env(mut self, password_env: impl Into<String>) -> Self {
         self.password_env = Some(password_env.into());
+        self
+    }
+
+    /// Sets the preferred private-key path.
+    #[must_use]
+    pub fn with_private_key_path(mut self, private_key_path: impl Into<String>) -> Self {
+        self.private_key_path = Some(private_key_path.into());
+        self
+    }
+
+    /// Sets the preferred private-key passphrase environment variable name.
+    #[must_use]
+    pub fn with_key_passphrase_env(mut self, key_passphrase_env: impl Into<String>) -> Self {
+        self.key_passphrase_env = Some(key_passphrase_env.into());
         self
     }
 
@@ -210,6 +230,22 @@ mod tests {
         assert_eq!(
             session.password_env.as_deref(),
             Some("RUSTTY_PROD_PASSWORD")
+        );
+    }
+
+    #[test]
+    fn session_can_store_private_key_defaults() {
+        let session = SessionConfig::new("prod", Protocol::Ssh)
+            .with_private_key_path("~/.ssh/id_ed25519")
+            .with_key_passphrase_env("RUSTTY_PROD_KEY_PASSPHRASE");
+
+        assert_eq!(
+            session.private_key_path.as_deref(),
+            Some("~/.ssh/id_ed25519")
+        );
+        assert_eq!(
+            session.key_passphrase_env.as_deref(),
+            Some("RUSTTY_PROD_KEY_PASSPHRASE")
         );
     }
 }

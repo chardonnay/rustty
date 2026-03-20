@@ -41,6 +41,16 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Updated `rusplink` to consume and surface those saved auth defaults in
   session listings and dry-run planning.
 
+[#suite-rusplink-public-key-auth]
+=== rusplink public-key authentication
+
+* Added reusable per-session SSH `private_key_path` and `key_passphrase_env`
+  fields to the RusTTY config schema.
+* Added OpenSSH private-key authentication to `rusplink`, with optional
+  passphrase indirection and password fallback ordering.
+* Extended `rusplink` dry-run and session-listing output so auth preference
+  order and saved key defaults are visible in script-friendly output.
+
 [#suite-rusplink-ssh-transport]
 === rusplink SSH transport
 

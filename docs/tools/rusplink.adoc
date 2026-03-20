@@ -16,6 +16,7 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 * listing stored RusTTY sessions
 * session-backed SSH invocation planning
 * direct-target SSH invocation planning
+* OpenSSH private-key authentication with optional passphrase indirection
 * password-authenticated SSH exec transport for remote commands
 * interactive SSH shell transport with remote PTY allocation
 * OpenSSH-style known-host lookup and append-only persistence
@@ -46,8 +47,9 @@ The bootstrap CLI is already scriptable and explicit:
   with a requested remote PTY.
 
 Live transport already supports both remote command execution and interactive
-shells. Passwords are read from an environment variable, and host keys are
-resolved through RusTTY's explicit known-hosts flow.
+shells. Public keys and passwords are read through explicit CLI or session
+configuration, and host keys are resolved through RusTTY's explicit
+known-hosts flow.
 
 == Configuration and Storage
 
@@ -57,9 +59,10 @@ from the default config path or an explicit `--config PATH`.
 Imported PuTTY sessions remain migration inputs, not the ongoing write target,
 but their provenance is surfaced in dry-run output and session listings.
 
-Saved RusTTY SSH sessions can now also carry a preferred `username` and
-`password_env`. `rusplink` uses those values automatically unless the caller
-overrides them with `--username` or `--password-env`.
+Saved RusTTY SSH sessions can now also carry a preferred `username`,
+`private_key_path`, `key_passphrase_env`, and `password_env`. `rusplink` uses
+those values automatically unless the caller overrides them with `--username`,
+`--private-key`, `--key-passphrase-env`, or `--password-env`.
 
 Host keys live in a separate OpenSSH-style `known_hosts` file that defaults to
 the same RusTTY-owned config base directory. `rusplink` can use the platform
@@ -67,15 +70,28 @@ default location or an explicit `--known-hosts PATH`.
 
 == Authentication and Host Keys
 
-The bootstrap transport currently supports password authentication only.
+The bootstrap transport currently supports two SSH auth modes:
 
+* OpenSSH private-key authentication through `--private-key PATH`
+* password authentication through `--password-env ENV`
+
+If both are configured, `rusplink` tries public-key auth first and keeps the
+password as a fallback.
+
+* `--private-key PATH` selects the OpenSSH private key to load.
+* `--key-passphrase-env ENV` selects the environment variable that contains
+  the private-key passphrase when the selected key is encrypted.
 * `--password-env ENV` selects the environment variable that contains the SSH
   password.
-* Without `--password-env`, `rusplink` reads `RUSTTY_SSH_PASSWORD`.
+* Without `--password-env`, `rusplink` reads `RUSTTY_SSH_PASSWORD` only when
+  no private key is configured.
 * `--username USER` overrides the username for session-backed connections.
 * Direct targets can also supply the username through `user@host`.
-* Saved sessions can provide default `username` and `password_env` values, so
-  recurring SSH targets no longer need to repeat them on every invocation.
+* Saved sessions can provide default `username`, `private_key_path`,
+  `key_passphrase_env`, and `password_env` values, so recurring SSH targets no
+  longer need to repeat them on every invocation.
+* `~` in private-key paths is expanded against `HOME` or `USERPROFILE` before
+  the SSH transport tries to load the key.
 
 Host-key handling now follows the RusTTY session policy plus the local
 known-hosts file:
@@ -99,10 +115,12 @@ hostnames are preserved on disk but are not used as trust matches yet.
 
 The current bootstrap output is line-oriented and script-friendly. Dry-run
 plans expose origin, config path, known-hosts path, host, port, command,
+ordered authentication methods, private-key path, key-passphrase source,
 password source, host-key policy, transport host-key mode, storage origin, and
-port-forward metadata. Session listings now also expose stored usernames and
-password environment variable names so operators can review reusable auth
-defaults without opening the TOML file manually.
+port-forward metadata. Session listings now also expose stored usernames,
+private-key paths, key-passphrase environment variable names, and password
+environment variable names so operators can review reusable auth defaults
+without opening the TOML file manually.
 
 == Compatibility Notes
 
@@ -156,19 +174,31 @@ RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --known-hosts /tmp/rustty-kn
 RUSTTY_SSH_PASSWORD=secret rusplink --session production --username ops --unsafe-accept-host-key -- uname -a
 ----
 
+[source,text]
+----
+rusplink ops@example.com --private-key ~/.ssh/id_ed25519 --dry-run
+----
+
+[source,text]
+----
+RUSTTY_PROD_KEY_PASSPHRASE=secret rusplink --session production --private-key ~/.ssh/id_ed25519 --key-passphrase-env RUSTTY_PROD_KEY_PASSPHRASE --unsafe-accept-host-key
+----
+
 == Current Limits
 
 Current bootstrap limits include:
 
 * only SSH sessions can be resolved by `rusplink`
 * `--config` is only used for `--session` and `--list-sessions`
-* only password authentication is implemented in the bootstrap transport
+* bootstrap public-key auth currently expects OpenSSH private-key files; PuTTY
+  PPK loading is not implemented yet
+* agent auth and keyboard-interactive auth are not implemented yet
 * `ask` still lacks an interactive prompt for unknown hosts, so it requires a
   pre-trusted exact known-host entry for live execution
 * known-host matching is intentionally conservative and currently ignores
   wildcard, negated, marked, or hashed host patterns
-* saved sessions currently model password-environment indirection, not direct
-  secret storage or public-key authentication material
+* saved sessions currently model private-key paths and environment-variable
+  indirection, not direct secret storage
 * remote commands run through SSH `exec`; PTY-backed interactive shells are
   available only when no remote command is supplied
 * direct targets support `host`, `user@host`, `host:port`, and

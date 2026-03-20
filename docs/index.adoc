@@ -6,6 +6,7 @@
 * xref:architecture/overview.adoc[Architecture Overview]
 * xref:architecture/workspace-layout.adoc[Workspace Layout]
 * xref:architecture/config-model.adoc[Configuration Model]
+* xref:architecture/putty-parity-roadmap.adoc[PuTTY Parity Roadmap]
 * xref:architecture/repository-workflow.adoc[Repository Workflow]
 * xref:architecture/release-process.adoc[Release Process]
 

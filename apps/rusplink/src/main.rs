@@ -11,8 +11,8 @@ use rustty_config::{
 };
 use rustty_core::{HostKeyPolicy, PortForwardSpec, Protocol, StorageFormat};
 use rustty_transport::{
-    HostKeyCheck, SshExecRequest, SshShellRequest, TerminalSize, VerifiedHostKey,
-    VerifiedHostKeySource, execute_ssh_command, run_interactive_shell,
+    HostKeyCheck, SshAuthentication, SshExecRequest, SshShellRequest, TerminalSize,
+    VerifiedHostKey, VerifiedHostKeySource, execute_ssh_command, run_interactive_shell,
 };
 
 const DEFAULT_PASSWORD_ENV: &str = "RUSTTY_SSH_PASSWORD";
@@ -25,16 +25,17 @@ Usage:
   rusplink --show-default-known-hosts-path
   rusplink --list-sessions [--config PATH]
   rusplink --list-sessions --config=PATH
-  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session=NAME [--config PATH] [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
-  rusplink TARGET [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink TARGET [--known-hosts PATH] [--username USER] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session=NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
 
 Notes:
   TARGET supports host, user@host, host:port, and [ipv6-host]:port forms.
-  Live SSH execution currently supports password authentication for remote
-  exec requests and interactive shell sessions.
+  Live SSH execution supports OpenSSH private keys and password authentication.
+  If both are configured, rusplink tries public-key auth first and falls back
+  to password authentication only if the server rejects the key.
   Host keys are verified against the RusTTY known-hosts file. `accept_new`
   sessions persist the first trusted server key automatically; `ask` still
   needs a pre-trusted key because interactive confirmation is not implemented.
@@ -47,7 +48,7 @@ enum Command {
     ShowDefaultConfigPath,
     ShowDefaultKnownHostsPath,
     ListSessions { config_path: Option<PathBuf> },
-    Plan(PlanRequest),
+    Plan(Box<PlanRequest>),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -59,6 +60,8 @@ struct PlanRequest {
     dry_run: bool,
     remote_command: Vec<String>,
     username_override: Option<String>,
+    private_key_path_override: Option<PathBuf>,
+    key_passphrase_env_override: Option<String>,
     password_env_override: Option<String>,
     unsafe_accept_host_key: bool,
 }
@@ -91,7 +94,9 @@ struct ConnectionPlan {
     port_forwards: Vec<PortForwardSpec>,
     saved_in: Option<StorageFormat>,
     imported_from: Option<ImportSource>,
-    password_env_var: String,
+    private_key_path: Option<PathBuf>,
+    key_passphrase_env: Option<String>,
+    password_env_var: Option<String>,
     unsafe_accept_host_key: bool,
 }
 
@@ -181,6 +186,8 @@ where
     let mut show_default_known_hosts_path = false;
     let mut remote_command = Vec::new();
     let mut username_override = None;
+    let mut private_key_path_override = None;
+    let mut key_passphrase_env_override = None;
     let mut password_env_override = None;
     let mut unsafe_accept_host_key = false;
     let mut known_hosts_path = None;
@@ -256,6 +263,28 @@ where
                 )?;
                 index += 1;
             }
+            "--private-key" => {
+                let raw_path = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| usage_error("missing value for --private-key"))?;
+                set_option_once(
+                    &mut private_key_path_override,
+                    PathBuf::from(raw_path),
+                    "duplicate --private-key flag",
+                )?;
+                index += 1;
+            }
+            "--key-passphrase-env" => {
+                let raw_env = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| usage_error("missing value for --key-passphrase-env"))?;
+                set_option_once(
+                    &mut key_passphrase_env_override,
+                    raw_env.clone(),
+                    "duplicate --key-passphrase-env flag",
+                )?;
+                index += 1;
+            }
             "--password-env" => {
                 let raw_env = arguments
                     .get(index + 1)
@@ -299,6 +328,18 @@ where
                         raw_username.to_owned(),
                         "duplicate --username flag",
                     )?;
+                } else if let Some(raw_path) = argument.strip_prefix("--private-key=") {
+                    set_option_once(
+                        &mut private_key_path_override,
+                        PathBuf::from(raw_path),
+                        "duplicate --private-key flag",
+                    )?;
+                } else if let Some(raw_env) = argument.strip_prefix("--key-passphrase-env=") {
+                    set_option_once(
+                        &mut key_passphrase_env_override,
+                        raw_env.to_owned(),
+                        "duplicate --key-passphrase-env flag",
+                    )?;
                 } else if let Some(raw_env) = argument.strip_prefix("--password-env=") {
                     set_option_once(
                         &mut password_env_override,
@@ -335,6 +376,8 @@ where
             || dry_run
             || !remote_command.is_empty()
             || username_override.is_some()
+            || private_key_path_override.is_some()
+            || key_passphrase_env_override.is_some()
             || password_env_override.is_some()
             || unsafe_accept_host_key
         {
@@ -357,6 +400,8 @@ where
             || dry_run
             || !remote_command.is_empty()
             || username_override.is_some()
+            || private_key_path_override.is_some()
+            || key_passphrase_env_override.is_some()
             || password_env_override.is_some()
             || unsafe_accept_host_key
         {
@@ -375,6 +420,8 @@ where
             || dry_run
             || !remote_command.is_empty()
             || username_override.is_some()
+            || private_key_path_override.is_some()
+            || key_passphrase_env_override.is_some()
             || password_env_override.is_some()
             || unsafe_accept_host_key
             || known_hosts_path.is_some()
@@ -391,7 +438,7 @@ where
         (Some(_), Some(_)) => Err(usage_error(
             "cannot combine --session with a direct target argument",
         )),
-        (Some(session_name), None) => Ok(Command::Plan(PlanRequest {
+        (Some(session_name), None) => Ok(Command::Plan(Box::new(PlanRequest {
             config_path,
             known_hosts_path,
             target: InvocationTarget::Session(session_name),
@@ -399,9 +446,11 @@ where
             dry_run,
             remote_command,
             username_override,
+            private_key_path_override,
+            key_passphrase_env_override,
             password_env_override,
             unsafe_accept_host_key,
-        })),
+        }))),
         (None, Some(target)) => {
             if config_path.is_some() {
                 return Err(usage_error(
@@ -409,7 +458,7 @@ where
                 ));
             }
 
-            Ok(Command::Plan(PlanRequest {
+            Ok(Command::Plan(Box::new(PlanRequest {
                 config_path: None,
                 known_hosts_path,
                 target: InvocationTarget::Direct(target),
@@ -417,9 +466,11 @@ where
                 dry_run,
                 remote_command,
                 username_override,
+                private_key_path_override,
+                key_passphrase_env_override,
                 password_env_override,
                 unsafe_accept_host_key,
-            }))
+            })))
         }
         (None, None) => Err(usage_error("missing session name or target host")),
     }
@@ -450,7 +501,7 @@ where
     writeln!(writer, "config_path={}", config_path.display()).map_err(|error| error.to_string())?;
     writeln!(
         writer,
-        "name\tprotocol\thost\tport\tusername\tpassword_env\timported_from"
+        "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\timported_from"
     )
     .map_err(|error| error.to_string())?;
 
@@ -460,16 +511,20 @@ where
         let port = render_port(session.effective_port());
         let username = session.username.as_deref().unwrap_or("-");
         let password_env = session.password_env.as_deref().unwrap_or("-");
+        let private_key_path = session.private_key_path.as_deref().unwrap_or("-");
+        let key_passphrase_env = session.key_passphrase_env.as_deref().unwrap_or("-");
         let imported_from = render_import_source(stored_session.imported_from);
         writeln!(
             writer,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             session.name,
             session.protocol.label(),
             host,
             port,
             username,
             password_env,
+            private_key_path,
+            key_passphrase_env,
             imported_from
         )
         .map_err(|error| error.to_string())?;
@@ -519,11 +574,26 @@ fn build_session_plan(
         .port_override
         .or_else(|| session.effective_port())
         .unwrap_or(22);
-    let password_env_var = request
-        .password_env_override
+    let private_key_path = resolve_private_key_path(
+        request.private_key_path_override.clone(),
+        session.private_key_path.as_deref(),
+    )?;
+    let key_passphrase_env = request
+        .key_passphrase_env_override
         .clone()
-        .or_else(|| session.password_env.clone())
-        .unwrap_or_else(|| DEFAULT_PASSWORD_ENV.to_owned());
+        .or_else(|| session.key_passphrase_env.clone());
+    let password_env_var = resolve_password_env_var(
+        request.password_env_override.clone(),
+        session.password_env.clone(),
+        private_key_path.is_some(),
+    );
+    validate_authentication_preferences(
+        "session",
+        session.name.as_str(),
+        private_key_path.as_ref(),
+        key_passphrase_env.as_deref(),
+        password_env_var.as_deref(),
+    )?;
 
     Ok(ConnectionPlan {
         origin: PlanOrigin::Session,
@@ -542,6 +612,8 @@ fn build_session_plan(
         port_forwards: session.port_forwards.clone(),
         saved_in: Some(session.saved_in),
         imported_from: stored_session.imported_from,
+        private_key_path,
+        key_passphrase_env,
         password_env_var,
         unsafe_accept_host_key: request.unsafe_accept_host_key,
     })
@@ -557,10 +629,21 @@ fn build_direct_plan(
         return Err("direct target host must not be empty".to_owned());
     }
 
-    let password_env_var = request
-        .password_env_override
-        .clone()
-        .unwrap_or_else(|| DEFAULT_PASSWORD_ENV.to_owned());
+    let private_key_path =
+        resolve_private_key_path(request.private_key_path_override.clone(), None)?;
+    let key_passphrase_env = request.key_passphrase_env_override.clone();
+    let password_env_var = resolve_password_env_var(
+        request.password_env_override.clone(),
+        None,
+        private_key_path.is_some(),
+    );
+    validate_authentication_preferences(
+        "direct target",
+        target.host.as_str(),
+        private_key_path.as_ref(),
+        key_passphrase_env.as_deref(),
+        password_env_var.as_deref(),
+    )?;
 
     Ok(ConnectionPlan {
         origin: PlanOrigin::Direct,
@@ -579,6 +662,8 @@ fn build_direct_plan(
         port_forwards: Vec::new(),
         saved_in: None,
         imported_from: None,
+        private_key_path,
+        key_passphrase_env,
         password_env_var,
         unsafe_accept_host_key: request.unsafe_accept_host_key,
     })
@@ -595,14 +680,14 @@ where
 {
     let host_key_check = resolve_host_key_check(plan)?;
     let username = resolve_execution_username(plan.username.as_deref())?;
-    let password = resolve_password(&plan.password_env_var)?;
+    let authentication_methods = resolve_authentication_methods(plan)?;
 
     if plan.remote_command.is_empty() {
         let request = SshShellRequest {
             host: plan.host.clone(),
             port: plan.port,
             username,
-            password,
+            authentication_methods,
             term_type: resolve_term_type(),
             terminal_size: resolve_terminal_size()?,
             host_key_check,
@@ -617,7 +702,7 @@ where
         host: plan.host.clone(),
         port: plan.port,
         username,
-        password,
+        authentication_methods,
         command: render_remote_command(&plan.remote_command),
         host_key_check,
     };
@@ -677,8 +762,30 @@ where
         render_remote_command(&plan.remote_command)
     )
     .map_err(|error| error.to_string())?;
-    writeln!(writer, "password_env={}", plan.password_env_var)
-        .map_err(|error| error.to_string())?;
+    writeln!(
+        writer,
+        "authentication_methods={}",
+        render_authentication_methods(plan)
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        writer,
+        "private_key_path={}",
+        render_path(plan.private_key_path.as_ref())
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        writer,
+        "key_passphrase_env={}",
+        plan.key_passphrase_env.as_deref().unwrap_or("-")
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        writer,
+        "password_env={}",
+        plan.password_env_var.as_deref().unwrap_or("-")
+    )
+    .map_err(|error| error.to_string())?;
     writeln!(
         writer,
         "host_key_policy={}",
@@ -750,16 +857,47 @@ fn resolve_execution_username(requested_username: Option<&str>) -> Result<String
         })
 }
 
-fn resolve_password(password_env_var: &str) -> Result<String, String> {
-    let password = env::var(password_env_var)
-        .map_err(|_| format!("missing SSH password in environment variable {password_env_var}"))?;
-    if password.is_empty() {
+fn resolve_authentication_methods(plan: &ConnectionPlan) -> Result<Vec<SshAuthentication>, String> {
+    let mut authentication_methods = Vec::new();
+
+    if let Some(private_key_path) = plan.private_key_path.clone() {
+        let key_passphrase = plan
+            .key_passphrase_env
+            .as_deref()
+            .map(|env_var| resolve_secret_env(env_var, "SSH key passphrase"))
+            .transpose()?;
+        authentication_methods.push(SshAuthentication::PublicKey {
+            private_key_path,
+            key_passphrase,
+        });
+    }
+
+    if let Some(password_env_var) = plan.password_env_var.as_deref() {
+        authentication_methods.push(SshAuthentication::Password {
+            password: resolve_secret_env(password_env_var, "SSH password")?,
+        });
+    }
+
+    if authentication_methods.is_empty() {
+        return Err(
+            "SSH authentication is required; configure --private-key, --password-env, or session defaults"
+                .to_owned(),
+        );
+    }
+
+    Ok(authentication_methods)
+}
+
+fn resolve_secret_env(env_var: &str, secret_label: &str) -> Result<String, String> {
+    let value = env::var(env_var)
+        .map_err(|_| format!("missing {secret_label} in environment variable {env_var}"))?;
+    if value.is_empty() {
         return Err(format!(
-            "SSH password environment variable {password_env_var} must not be empty"
+            "{secret_label} environment variable {env_var} must not be empty"
         ));
     }
 
-    Ok(password)
+    Ok(value)
 }
 
 fn resolve_host_key_check(plan: &ConnectionPlan) -> Result<HostKeyCheck, String> {
@@ -963,6 +1101,22 @@ fn render_transport_host_key_check(plan: &ConnectionPlan) -> &'static str {
     }
 }
 
+fn render_authentication_methods(plan: &ConnectionPlan) -> String {
+    let mut methods = Vec::new();
+    if plan.private_key_path.is_some() {
+        methods.push("public_key");
+    }
+    if plan.password_env_var.is_some() {
+        methods.push("password");
+    }
+
+    if methods.is_empty() {
+        "-".to_owned()
+    } else {
+        methods.join(",")
+    }
+}
+
 fn render_storage_format(storage_format: Option<StorageFormat>) -> &'static str {
     match storage_format {
         Some(StorageFormat::Rustty) => "rustty",
@@ -982,6 +1136,90 @@ fn render_import_source(import_source: Option<ImportSource>) -> &'static str {
 
 fn render_port(port: Option<u16>) -> String {
     port.map_or_else(|| "-".to_owned(), |port| port.to_string())
+}
+
+fn render_path(path: Option<&PathBuf>) -> String {
+    path.map_or_else(|| "-".to_owned(), |path| path.display().to_string())
+}
+
+fn resolve_private_key_path(
+    override_path: Option<PathBuf>,
+    session_path: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    match override_path {
+        Some(path) => normalize_private_key_path(path).map(Some),
+        None => session_path
+            .map(PathBuf::from)
+            .map(normalize_private_key_path)
+            .transpose(),
+    }
+}
+
+fn normalize_private_key_path(path: PathBuf) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty() {
+        return Err("SSH private-key path must not be empty".to_owned());
+    }
+
+    let raw_path = path.to_string_lossy();
+    if raw_path == "~" {
+        return resolve_home_directory();
+    }
+
+    if let Some(relative_path) = raw_path
+        .strip_prefix("~/")
+        .or_else(|| raw_path.strip_prefix("~\\"))
+    {
+        return Ok(resolve_home_directory()?.join(relative_path));
+    }
+
+    Ok(path)
+}
+
+fn resolve_home_directory() -> Result<PathBuf, String> {
+    env::var_os("HOME")
+        .or_else(|| env::var_os("USERPROFILE"))
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            "cannot expand '~' in SSH private-key path because HOME/USERPROFILE is missing"
+                .to_owned()
+        })
+}
+
+fn resolve_password_env_var(
+    override_env: Option<String>,
+    session_env: Option<String>,
+    private_key_configured: bool,
+) -> Option<String> {
+    override_env.or(session_env).or_else(|| {
+        if private_key_configured {
+            None
+        } else {
+            Some(DEFAULT_PASSWORD_ENV.to_owned())
+        }
+    })
+}
+
+fn validate_authentication_preferences(
+    origin_label: &str,
+    target_label: &str,
+    private_key_path: Option<&PathBuf>,
+    key_passphrase_env: Option<&str>,
+    password_env_var: Option<&str>,
+) -> Result<(), String> {
+    if key_passphrase_env.is_some() && private_key_path.is_none() {
+        return Err(format!(
+            "{origin_label} '{target_label}' uses a key passphrase without a private key; configure --private-key or session private_key_path"
+        ));
+    }
+
+    if private_key_path.is_none() && password_env_var.is_none() {
+        return Err(format!(
+            "{origin_label} '{target_label}' does not define any SSH authentication source"
+        ));
+    }
+
+    Ok(())
 }
 
 fn set_option_once<T>(
@@ -1011,8 +1249,14 @@ mod tests {
     use rustty_config::{AppConfig, StoredSession, save_config};
     use rustty_core::{Protocol, SessionConfig};
 
-    use super::{Command, DEFAULT_PASSWORD_ENV, DirectTarget, PlanRequest, RunOutcome, run};
-    use crate::{InvocationTarget, parse_command, render_remote_command, resolve_host_key_check};
+    use super::{
+        Command, DEFAULT_PASSWORD_ENV, DirectTarget, PlanRequest, RunOutcome, SshAuthentication,
+        run,
+    };
+    use crate::{
+        InvocationTarget, normalize_private_key_path, parse_command, render_remote_command,
+        resolve_authentication_methods, resolve_host_key_check,
+    };
 
     #[test]
     fn defaults_to_help_when_no_arguments_are_supplied() {
@@ -1054,7 +1298,7 @@ mod tests {
                 "uname".to_owned(),
                 "-a".to_owned(),
             ]),
-            Ok(Command::Plan(PlanRequest {
+            Ok(Command::Plan(Box::new(PlanRequest {
                 config_path: Some(PathBuf::from("/tmp/rustty.toml")),
                 known_hosts_path: Some(PathBuf::from("/tmp/known_hosts")),
                 target: InvocationTarget::Session("production".to_owned()),
@@ -1062,9 +1306,36 @@ mod tests {
                 dry_run: true,
                 remote_command: vec!["uname".to_owned(), "-a".to_owned()],
                 username_override: Some("ops".to_owned()),
+                private_key_path_override: None,
+                key_passphrase_env_override: None,
                 password_env_override: Some("RUSTTY_TEST_PASSWORD".to_owned()),
                 unsafe_accept_host_key: true,
-            }))
+            })))
+        );
+    }
+
+    #[test]
+    fn parses_session_dry_run_with_public_key_flags() {
+        assert_eq!(
+            parse_command([
+                "--session=production".to_owned(),
+                "--private-key=/tmp/id_ed25519".to_owned(),
+                "--key-passphrase-env=RUSTTY_TEST_KEY_PASSPHRASE".to_owned(),
+                "--dry-run".to_owned(),
+            ]),
+            Ok(Command::Plan(Box::new(PlanRequest {
+                config_path: None,
+                known_hosts_path: None,
+                target: InvocationTarget::Session("production".to_owned()),
+                port_override: None,
+                dry_run: true,
+                remote_command: Vec::new(),
+                username_override: None,
+                private_key_path_override: Some(PathBuf::from("/tmp/id_ed25519")),
+                key_passphrase_env_override: Some("RUSTTY_TEST_KEY_PASSPHRASE".to_owned()),
+                password_env_override: None,
+                unsafe_accept_host_key: false,
+            })))
         );
     }
 
@@ -1083,7 +1354,7 @@ mod tests {
     fn parses_direct_target_with_bracketed_ipv6_host() {
         assert_eq!(
             parse_command(["ops@[2001:db8::1]:2200".to_owned(), "--dry-run".to_owned(),]),
-            Ok(Command::Plan(PlanRequest {
+            Ok(Command::Plan(Box::new(PlanRequest {
                 config_path: None,
                 known_hosts_path: None,
                 target: InvocationTarget::Direct(DirectTarget {
@@ -1095,9 +1366,11 @@ mod tests {
                 dry_run: true,
                 remote_command: Vec::new(),
                 username_override: None,
+                private_key_path_override: None,
+                key_passphrase_env_override: None,
                 password_env_override: None,
                 unsafe_accept_host_key: false,
-            }))
+            })))
         );
     }
 
@@ -1146,12 +1419,13 @@ mod tests {
         let output = String::from_utf8(output).expect("output should be valid UTF-8");
         assert!(output.contains("config_path="));
         assert!(
-            output.contains("name\tprotocol\thost\tport\tusername\tpassword_env\timported_from")
+            output.contains(
+                "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\timported_from"
+            )
         );
-        assert!(
-            output
-                .contains("example-ssh\tSSH\texample.com\t22\tops\tRUSTTY_EXAMPLE_SSH_PASSWORD\t-")
-        );
+        assert!(output.contains(
+            "example-ssh\tSSH\texample.com\t22\tops\tRUSTTY_EXAMPLE_SSH_PASSWORD\t-\t-\t-"
+        ));
         assert!(error_output.is_empty());
     }
 
@@ -1182,7 +1456,51 @@ mod tests {
         assert_eq!(outcome, RunOutcome::Success);
         let output = String::from_utf8(output).expect("output should be valid UTF-8");
         assert!(output.contains("username=ops"));
+        assert!(output.contains("authentication_methods=password"));
+        assert!(output.contains("private_key_path=-"));
+        assert!(output.contains("key_passphrase_env=-"));
         assert!(output.contains("password_env=RUSTTY_EXAMPLE_SSH_PASSWORD"));
+        assert!(error_output.is_empty());
+    }
+
+    #[test]
+    fn session_dry_run_uses_stored_public_key_defaults() {
+        let workspace = temporary_workspace();
+        let private_key_path = workspace.join("id_ed25519");
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("example-key", Protocol::Ssh)
+                .with_host("example-key.example")
+                .with_username("ops")
+                .with_private_key_path(private_key_path.display().to_string())
+                .with_key_passphrase_env("RUSTTY_EXAMPLE_KEY_PASSPHRASE"),
+        ));
+        let config_path = write_config(config);
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let mut output = Vec::new();
+        let mut error_output = Vec::new();
+
+        let outcome = run(
+            [
+                "--session".to_owned(),
+                "example-key".to_owned(),
+                "--config".to_owned(),
+                config_path.display().to_string(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
+                "--dry-run".to_owned(),
+            ],
+            &mut output,
+            &mut error_output,
+        )
+        .expect("session dry-run should succeed");
+
+        assert_eq!(outcome, RunOutcome::Success);
+        let output = String::from_utf8(output).expect("output should be valid UTF-8");
+        assert!(output.contains("authentication_methods=public_key"));
+        assert!(output.contains(&format!("private_key_path={}", private_key_path.display())));
+        assert!(output.contains("key_passphrase_env=RUSTTY_EXAMPLE_KEY_PASSPHRASE"));
+        assert!(output.contains("password_env=-"));
         assert!(error_output.is_empty());
     }
 
@@ -1223,6 +1541,7 @@ mod tests {
         assert!(output.contains("port=22"));
         assert!(output.contains(&format!("known_hosts_path={}", known_hosts_path.display())));
         assert!(output.contains("username=ops"));
+        assert!(output.contains("authentication_methods=password"));
         assert!(output.contains("password_env=RUSTTY_TEST_PASSWORD"));
         assert!(output.contains("transport_host_key_check=unsafe_accept_any"));
         assert!(output.contains("command=hostname"));
@@ -1259,9 +1578,56 @@ mod tests {
         assert!(output.contains("host=2001:db8::10"));
         assert!(output.contains("port=2222"));
         assert!(output.contains(&format!("known_hosts_path={}", known_hosts_path.display())));
+        assert!(output.contains("authentication_methods=password"));
         assert!(output.contains("password_env=RUSTTY_TEST_PASSWORD"));
         assert!(output.contains("command=uptime"));
         assert!(error_output.is_empty());
+    }
+
+    #[test]
+    fn direct_target_public_key_dry_run_does_not_require_default_password_env() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let private_key_path = temporary_workspace().join("id_ed25519");
+        let mut output = Vec::new();
+        let mut error_output = Vec::new();
+
+        let outcome = run(
+            [
+                "ops@example.com".to_owned(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
+                "--private-key".to_owned(),
+                private_key_path.display().to_string(),
+                "--dry-run".to_owned(),
+            ],
+            &mut output,
+            &mut error_output,
+        )
+        .expect("direct target key-auth dry-run should succeed");
+
+        assert_eq!(outcome, RunOutcome::Success);
+        let output = String::from_utf8(output).expect("output should be valid UTF-8");
+        assert!(output.contains("authentication_methods=public_key"));
+        assert!(output.contains(&format!("private_key_path={}", private_key_path.display())));
+        assert!(output.contains("password_env=-"));
+        assert!(error_output.is_empty());
+    }
+
+    #[test]
+    fn rejects_key_passphrase_env_without_private_key() {
+        let error = run(
+            [
+                "ops@example.com".to_owned(),
+                "--key-passphrase-env".to_owned(),
+                "RUSTTY_TEST_KEY_PASSPHRASE".to_owned(),
+                "--dry-run".to_owned(),
+            ],
+            &mut Vec::new(),
+            &mut Vec::new(),
+        )
+        .expect_err("dangling key passphrase env should be rejected");
+
+        assert!(error.contains("key passphrase without a private key"));
     }
 
     #[test]
@@ -1349,7 +1715,9 @@ mod tests {
             port_forwards: Vec::new(),
             saved_in: None,
             imported_from: None,
-            password_env_var: DEFAULT_PASSWORD_ENV.to_owned(),
+            private_key_path: None,
+            key_passphrase_env: None,
+            password_env_var: Some(DEFAULT_PASSWORD_ENV.to_owned()),
             unsafe_accept_host_key: false,
         };
 
@@ -1361,6 +1729,66 @@ mod tests {
             | rustty_transport::HostKeyCheck::TrustOnFirstUse => {
                 panic!("expected stored known-host verification")
             }
+        }
+    }
+
+    #[test]
+    fn expands_home_relative_private_key_paths() {
+        let home = std::env::var("HOME").expect("HOME should be available during tests");
+        let expanded =
+            normalize_private_key_path(PathBuf::from("~/id_ed25519")).expect("path should expand");
+        assert_eq!(expanded, PathBuf::from(home).join("id_ed25519"));
+    }
+
+    #[test]
+    fn resolve_authentication_methods_prefers_public_key_then_password() {
+        let expected_password =
+            std::env::var("PATH").expect("PATH should be available during tests");
+        let expected_key_passphrase =
+            std::env::var("HOME").expect("HOME should be available during tests");
+        let plan = super::ConnectionPlan {
+            origin: super::PlanOrigin::Direct,
+            config_path: None,
+            known_hosts_path: PathBuf::from("/tmp/known_hosts"),
+            session_name: None,
+            protocol: Protocol::Ssh,
+            username: Some("ops".to_owned()),
+            host: "example.com".to_owned(),
+            port: 22,
+            remote_command: vec!["uptime".to_owned()],
+            host_key_policy: rustty_core::HostKeyPolicy::Ask,
+            port_forwards: Vec::new(),
+            saved_in: None,
+            imported_from: None,
+            private_key_path: Some(PathBuf::from("/tmp/id_ed25519")),
+            key_passphrase_env: Some("HOME".to_owned()),
+            password_env_var: Some("PATH".to_owned()),
+            unsafe_accept_host_key: false,
+        };
+
+        let authentication_methods =
+            resolve_authentication_methods(&plan).expect("auth resolution should succeed");
+        assert_eq!(authentication_methods.len(), 2);
+        match &authentication_methods[0] {
+            SshAuthentication::PublicKey {
+                private_key_path,
+                key_passphrase,
+            } => {
+                assert_eq!(private_key_path, &PathBuf::from("/tmp/id_ed25519"));
+                assert_eq!(
+                    key_passphrase.as_deref(),
+                    Some(expected_key_passphrase.as_str())
+                );
+            }
+            SshAuthentication::Password { .. } => panic!("expected public-key auth first"),
+        }
+        match &authentication_methods[1] {
+            SshAuthentication::Password {
+                password: resolved_password,
+            } => {
+                assert_eq!(resolved_password, &expected_password)
+            }
+            SshAuthentication::PublicKey { .. } => panic!("expected password fallback second"),
         }
     }
 

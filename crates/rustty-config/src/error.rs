@@ -92,6 +92,12 @@ pub enum ValidationError {
     EmptySessionUsername(String),
     /// A stored session password environment variable name is empty.
     EmptySessionPasswordEnv(String),
+    /// A stored session private-key path is empty.
+    EmptySessionPrivateKeyPath(String),
+    /// A stored session key-passphrase environment variable name is empty.
+    EmptySessionKeyPassphraseEnv(String),
+    /// A session declares a key-passphrase environment variable without a key path.
+    DanglingSessionKeyPassphraseEnv(String),
     /// Multiple sessions share the same name.
     DuplicateSessionName(String),
     /// The config repeats a tool profile binary name.
@@ -121,6 +127,24 @@ impl fmt::Display for ValidationError {
                 write!(
                     formatter,
                     "RusTTY session '{session_name}' must not use an empty password_env"
+                )
+            }
+            Self::EmptySessionPrivateKeyPath(session_name) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' must not use an empty private_key_path"
+                )
+            }
+            Self::EmptySessionKeyPassphraseEnv(session_name) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' must not use an empty key_passphrase_env"
+                )
+            }
+            Self::DanglingSessionKeyPassphraseEnv(session_name) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' uses key_passphrase_env without private_key_path"
                 )
             }
             Self::DuplicateSessionName(session_name) => {

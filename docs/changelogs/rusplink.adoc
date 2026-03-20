@@ -2,6 +2,16 @@
 
 == Unreleased
 
+[#rusplink-public-key-auth]
+=== Public-key authentication
+
+* Added `--private-key` and `--key-passphrase-env` so `rusplink` can use
+  OpenSSH private keys for both dry-run planning and live SSH transport.
+* Added ordered auth resolution so `rusplink` prefers public-key auth first
+  and can keep password authentication as an explicit fallback.
+* Extended dry-run output and session listings to expose saved private-key and
+  passphrase-indirection defaults.
+
 [#rusplink-session-auth-defaults]
 === Session auth defaults
 

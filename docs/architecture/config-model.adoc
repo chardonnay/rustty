@@ -21,14 +21,17 @@ The initial configuration crate models:
 * a schema version,
 * the product name,
 * a session store with normalized sessions,
-* optional per-session SSH username and password-environment defaults,
+* optional per-session SSH username, private-key path, key-passphrase
+  environment variable, and password-environment defaults,
 * optional import provenance for migrated sessions, and
 * a per-tool profile list derived from the shared tool metadata table.
 
 Session names are now validated as unique so CLI tools such as `rusplink` can
 load them deterministically by name. Empty stored SSH usernames and empty
-`password_env` names are rejected during validation so bootstrap CLIs do not
-have to guess how to recover from malformed auth defaults.
+`password_env`, `private_key_path`, and `key_passphrase_env` values are
+rejected during validation so bootstrap CLIs do not have to guess how to
+recover from malformed auth defaults. `key_passphrase_env` is also rejected
+when no `private_key_path` is present.
 
 == Sample Configuration
 
@@ -42,6 +45,20 @@ cargo run -p rustty -- --print-sample-config
 This sample is intended to give future import and storage work a stable target.
 It now also demonstrates how RusTTY stores reusable SSH auth defaults inside a
 session definition.
+
+== SSH Auth Preference Resolution
+
+For SSH-family tools, RusTTY resolves auth preferences in this order:
+
+* CLI overrides such as `--username`, `--private-key`, `--key-passphrase-env`,
+  and `--password-env`
+* saved session defaults from the RusTTY config
+* `RUSTTY_SSH_PASSWORD` as the implicit password source only when no private
+  key is configured
+
+This keeps public-key-only sessions from requiring an unnecessary password
+environment variable while still preserving the bootstrap password flow for
+direct targets and simple saved sessions.
 
 == Default Config Path Policy
 
@@ -65,7 +82,8 @@ These flows are intentionally small but already exercise the versioned RusTTY
 config schema and on-disk validation path.
 
 The same config schema can now also be consumed by `rusplink` for session
-listing and SSH dry-run planning.
+listing, SSH dry-run planning, and live bootstrap transport with either
+password or public-key authentication.
 
 == Known-Hosts Path Policy
 

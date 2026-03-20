@@ -2,11 +2,13 @@
 
 use std::{
     fmt, io,
+    path::PathBuf,
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
 use crossterm::terminal;
+use russh::keys::{PrivateKeyWithHashAlg, load_secret_key};
 use russh::{ChannelMsg, Disconnect, client};
 use ssh_key::{HashAlg, PublicKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -42,6 +44,23 @@ pub struct VerifiedHostKey {
     pub source: VerifiedHostKeySource,
 }
 
+/// Supported SSH authentication methods for the current request.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SshAuthentication {
+    /// Password authentication.
+    Password {
+        /// Secret password material.
+        password: String,
+    },
+    /// OpenSSH private-key authentication.
+    PublicKey {
+        /// Path to the private-key file.
+        private_key_path: PathBuf,
+        /// Optional decrypted passphrase for the key file.
+        key_passphrase: Option<String>,
+    },
+}
+
 /// A request to run a single remote command over SSH.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SshExecRequest {
@@ -51,8 +70,8 @@ pub struct SshExecRequest {
     pub port: u16,
     /// SSH username.
     pub username: String,
-    /// Password used for SSH password authentication.
-    pub password: String,
+    /// Ordered SSH authentication methods to try.
+    pub authentication_methods: Vec<SshAuthentication>,
     /// Command string sent through `exec`.
     pub command: String,
     /// Host-key handling mode for this request.
@@ -68,8 +87,8 @@ pub struct SshShellRequest {
     pub port: u16,
     /// SSH username.
     pub username: String,
-    /// Password used for SSH password authentication.
-    pub password: String,
+    /// Ordered SSH authentication methods to try.
+    pub authentication_methods: Vec<SshAuthentication>,
     /// Terminal type sent in the PTY request.
     pub term_type: String,
     /// Initial terminal size sent in the PTY request.
@@ -135,8 +154,17 @@ pub enum TransportError {
     LocalIo(io::Error),
     /// The request does not contain a command.
     MissingCommand,
-    /// Password-based authentication was rejected by the server.
+    /// All configured authentication methods were rejected by the server.
     AuthenticationRejected,
+    /// No SSH authentication methods were configured.
+    MissingAuthentication,
+    /// Loading a local private key failed.
+    PrivateKeyLoad {
+        /// Path of the key file that failed to load.
+        path: PathBuf,
+        /// Underlying key-loading error.
+        source: russh::keys::Error,
+    },
     /// The remote command or shell completed without reporting an exit status.
     MissingExitStatus,
     /// The server did not expose a host key decision to the caller.
@@ -159,7 +187,17 @@ impl fmt::Display for TransportError {
             Self::LocalIo(source) => write!(formatter, "local terminal I/O failed: {source}"),
             Self::MissingCommand => write!(formatter, "missing remote command for SSH exec"),
             Self::AuthenticationRejected => {
-                write!(formatter, "SSH password authentication was rejected")
+                write!(formatter, "SSH authentication was rejected")
+            }
+            Self::MissingAuthentication => {
+                write!(formatter, "missing SSH authentication method")
+            }
+            Self::PrivateKeyLoad { path, source } => {
+                write!(
+                    formatter,
+                    "failed to load SSH private key {}: {source}",
+                    path.display()
+                )
             }
             Self::MissingExitStatus => {
                 write!(formatter, "remote session finished without an exit status")
@@ -191,8 +229,10 @@ impl std::error::Error for TransportError {
         match self {
             Self::Runtime(source) | Self::LocalIo(source) => Some(source),
             Self::Russh(source) => Some(source),
+            Self::PrivateKeyLoad { source, .. } => Some(source),
             Self::MissingCommand
             | Self::AuthenticationRejected
+            | Self::MissingAuthentication
             | Self::MissingExitStatus
             | Self::MissingVerifiedHostKey
             | Self::HostKeyMismatch { .. } => None,
@@ -221,7 +261,7 @@ async fn async_execute_ssh_command(
         &request.host,
         request.port,
         &request.username,
-        &request.password,
+        &request.authentication_methods,
         &request.host_key_check,
     )
     .await?;
@@ -288,7 +328,7 @@ async fn async_run_interactive_shell(
         &request.host,
         request.port,
         &request.username,
-        &request.password,
+        &request.authentication_methods,
         &request.host_key_check,
     )
     .await?;
@@ -419,7 +459,7 @@ async fn connect_authenticated_session(
     host: &str,
     port: u16,
     username: &str,
-    password: &str,
+    authentication_methods: &[SshAuthentication],
     host_key_check: &HostKeyCheck,
 ) -> Result<(client::Handle<ClientHandler>, VerifiedHostKey), TransportError> {
     let config = Arc::new(client::Config {
@@ -437,14 +477,7 @@ async fn connect_authenticated_session(
     let mut session = client::connect(config, address, handler)
         .await
         .map_err(|source| map_connect_error(source, &state))?;
-    let auth_result = session
-        .authenticate_password(username.to_owned(), password.to_owned())
-        .await
-        .map_err(TransportError::Russh)?;
-
-    if !auth_result.success() {
-        return Err(TransportError::AuthenticationRejected);
-    }
+    authenticate_session(&mut session, username, authentication_methods).await?;
 
     let verified_host_key = lock_state(&state)
         .verified_host_key
@@ -452,6 +485,53 @@ async fn connect_authenticated_session(
         .ok_or(TransportError::MissingVerifiedHostKey)?;
 
     Ok((session, verified_host_key))
+}
+
+async fn authenticate_session(
+    session: &mut client::Handle<ClientHandler>,
+    username: &str,
+    authentication_methods: &[SshAuthentication],
+) -> Result<(), TransportError> {
+    if authentication_methods.is_empty() {
+        return Err(TransportError::MissingAuthentication);
+    }
+
+    for authentication in authentication_methods {
+        let auth_result = match authentication {
+            SshAuthentication::Password { password } => session
+                .authenticate_password(username.to_owned(), password.clone())
+                .await
+                .map_err(TransportError::Russh)?,
+            SshAuthentication::PublicKey {
+                private_key_path,
+                key_passphrase,
+            } => {
+                let private_key = load_secret_key(private_key_path, key_passphrase.as_deref())
+                    .map_err(|source| TransportError::PrivateKeyLoad {
+                        path: private_key_path.clone(),
+                        source,
+                    })?;
+                let signature_hash = session
+                    .best_supported_rsa_hash()
+                    .await
+                    .map_err(TransportError::Russh)?
+                    .flatten();
+                session
+                    .authenticate_publickey(
+                        username.to_owned(),
+                        PrivateKeyWithHashAlg::new(Arc::new(private_key), signature_hash),
+                    )
+                    .await
+                    .map_err(TransportError::Russh)?
+            }
+        };
+
+        if auth_result.success() {
+            return Ok(());
+        }
+    }
+
+    Err(TransportError::AuthenticationRejected)
 }
 
 async fn handle_shell_channel_message(
@@ -643,11 +723,13 @@ impl ShellChannel for russh::Channel<client::Msg> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use ssh_key::PublicKey;
 
     use super::{
-        HostKeyCheck, SshExecRequest, TerminalSize, TransportError, VerifiedHostKeySource,
-        execute_ssh_command,
+        HostKeyCheck, SshAuthentication, SshExecRequest, TerminalSize, TransportError,
+        VerifiedHostKeySource, execute_ssh_command,
     };
 
     #[test]
@@ -656,7 +738,9 @@ mod tests {
             host: "example.com".to_owned(),
             port: 22,
             username: "ops".to_owned(),
-            password: "secret".to_owned(),
+            authentication_methods: vec![SshAuthentication::Password {
+                password: "secret".to_owned(),
+            }],
             command: "   ".to_owned(),
             host_key_check: HostKeyCheck::AcceptAny,
         };
@@ -700,5 +784,24 @@ mod tests {
             VerifiedHostKeySource::KnownHosts,
             VerifiedHostKeySource::KnownHosts
         );
+    }
+
+    #[test]
+    fn public_key_auth_configuration_is_stable_data() {
+        let authentication = SshAuthentication::PublicKey {
+            private_key_path: PathBuf::from("/tmp/id_ed25519"),
+            key_passphrase: Some("secret".to_owned()),
+        };
+
+        match authentication {
+            SshAuthentication::PublicKey {
+                private_key_path,
+                key_passphrase,
+            } => {
+                assert_eq!(private_key_path, PathBuf::from("/tmp/id_ed25519"));
+                assert_eq!(key_passphrase.as_deref(), Some("secret"));
+            }
+            SshAuthentication::Password { .. } => panic!("expected public-key auth"),
+        }
     }
 }

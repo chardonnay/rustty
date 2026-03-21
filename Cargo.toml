@@ -24,6 +24,7 @@ authors = ["Daniel Mengel <daniel.mengel@gmail.com>"]
 
 [workspace.dependencies]
 crossterm = "0.29.0"
+eframe = { version = "0.32.3", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 rustty-config = { path = "crates/rustty-config", version = "0.1.0" }
 rustty-core = { path = "crates/rustty-core", version = "0.1.0" }
 rustty-transport = { path = "crates/rustty-transport", version = "0.1.0" }

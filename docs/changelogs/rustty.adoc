@@ -2,6 +2,18 @@
 
 == Unreleased
 
+[#rustty-gui-launcher]
+=== Native GUI launcher
+
+* Replaced the stdout placeholder flow with a native `rustty` desktop window.
+* Added a saved-session browser with search, import-provenance display, and
+  selected-session detail panels for auth defaults, forwarding, and host-key
+  policy.
+* Added a quick-connect draft surface that builds operator-facing launch
+  previews while the embedded terminal window is still pending.
+* Added launcher-side diagnostics and tool-catalog panels so config paths,
+  manuals, and release-tracking artifacts are visible directly in the GUI.
+
 [#rustty-hostkey-import]
 === Host-key import helpers
 

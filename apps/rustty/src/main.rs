@@ -28,7 +28,7 @@ Usage:
 
 #[derive(Debug, Eq, PartialEq)]
 enum Command {
-    Placeholder,
+    Gui,
     Help,
     PrintSampleConfig,
     ShowDefaultConfigPath,
@@ -64,13 +64,7 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     match parse_command(std::env::args().skip(1))? {
-        Command::Placeholder => {
-            let window = rustty_ui::placeholder_window(rustty_core::tool_spec(
-                rustty_core::ToolKind::Rustty,
-            ));
-            println!("{}\n\n{}", window.title, window.body);
-            Ok(())
-        }
+        Command::Gui => open_gui(),
         Command::Help => {
             print!("{USAGE}");
             Ok(())
@@ -98,13 +92,22 @@ fn run() -> Result<(), String> {
     }
 }
 
+fn open_gui() -> Result<(), String> {
+    let config_path = resolve_config_path(None)?;
+    let known_hosts_path = resolve_known_hosts_path(None)?;
+    rustty_ui::run_native(rustty_ui::LauncherOptions::new(
+        config_path,
+        known_hosts_path,
+    ))
+}
+
 fn parse_command<I>(arguments: I) -> Result<Command, String>
 where
     I: IntoIterator<Item = String>,
 {
     let arguments = arguments.into_iter().collect::<Vec<_>>();
     if arguments.is_empty() {
-        return Ok(Command::Placeholder);
+        return Ok(Command::Gui);
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -582,11 +585,8 @@ mod tests {
     use super::{Command, parse_command};
 
     #[test]
-    fn defaults_to_placeholder_mode() {
-        assert_eq!(
-            parse_command(Vec::<String>::new()),
-            Ok(Command::Placeholder)
-        );
+    fn defaults_to_gui_mode() {
+        assert_eq!(parse_command(Vec::<String>::new()), Ok(Command::Gui));
     }
 
     #[test]

@@ -15,7 +15,8 @@
   known-host persistence.
 * `crates/rustty-transport` contains reusable transport-layer helpers for SSH
   exec and interactive shell sessions.
-* `crates/rustty-ui` contains shared GUI-facing bootstrap logic.
+* `crates/rustty-ui` contains shared native-launcher state and desktop GUI
+  rendering logic.
 
 == Applications
 

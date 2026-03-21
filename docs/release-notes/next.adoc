@@ -5,6 +5,10 @@
 
 === Configuration
 
+* `rustty` now opens a native GUI launcher with a saved-session browser,
+  quick-connect draft, tool catalog, and launcher-side diagnostics instead of
+  printing a placeholder banner.
+  xref:../changelogs/rustty.adoc#rustty-gui-launcher[Changelog entry]
 * `rustty` can now print a sample RusTTY configuration for schema review.
   xref:../changelogs/rustty.adoc#rustty-sample-config[Changelog entry]
 * `rustty` can now show the default config path, initialize a sample config

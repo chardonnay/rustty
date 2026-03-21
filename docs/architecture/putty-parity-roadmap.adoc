@@ -39,9 +39,10 @@ branches can continue to work through the same queue without losing context.
 * stricter host-key UI and compatibility prompts (`done`)
 
 [#roadmap-rustty-gui]
-=== 4. rustty GUI session window (`next`)
+=== 4. rustty GUI session window (`in_progress`)
 
-* native session launcher and connection dialog
+* native session launcher and connection dialog (`done`)
+* saved-session browser, diagnostics, and quick-connect planning (`done`)
 * interactive terminal window
 * session lifecycle, resize handling, copy/paste, and scrollback
 

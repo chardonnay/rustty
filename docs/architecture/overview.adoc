@@ -35,9 +35,10 @@ keeping host-key policy decisions explicit at the application layer.
 
 === `rustty-ui`
 
-The UI crate is the shared presentation layer for the future GUI client. The
-bootstrap implementation stays lightweight and intentionally does not commit the
-project to a specific widget toolkit yet.
+The UI crate is the shared presentation layer for the native `rustty`
+launcher. The current implementation uses a compact `eframe`/`egui` shell for
+session browsing, quick-connect planning, and diagnostics while keeping the
+terminal-emulation work isolated for later milestones.
 
 === Application binaries
 

@@ -6,6 +6,17 @@ This file tracks suite-level milestones. Tool-specific details live under
 
 == Unreleased
 
+[#suite-rustty-gui-launcher]
+=== rustty GUI launcher
+
+* Replaced the `rustty` placeholder output with a native desktop launcher
+  backed by the shared `rustty-ui` crate.
+* Added a config-aware session browser, selected-session inspector, and
+  quick-connect planning surface so the GUI can already review RusTTY config
+  and PuTTY migration results before the embedded terminal lands.
+* Added GUI-visible diagnostics and a tool catalog for documentation and
+  release-tracking paths.
+
 [#suite-config-foundation]
 === Configuration foundation
 

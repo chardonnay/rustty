@@ -13,4 +13,6 @@ publish = false
 workspace = true
 
 [dependencies]
+eframe.workspace = true
+rustty-config.workspace = true
 rustty-core.workspace = true

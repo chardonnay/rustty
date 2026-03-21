@@ -20,9 +20,17 @@ sessions and migration helpers.
 
 == Usage Model
 
-The bootstrap binary currently prints a repository-aware placeholder message.
-The long-term model is a GUI launcher backed by the shared RusTTY core and
-shared UI layer.
+Running `rustty` with no arguments now opens a native desktop launcher window
+backed by the shared RusTTY core and shared UI layer.
+
+The current launcher window provides:
+
+* a saved-session browser with search and provenance display
+* a selected-session detail pane for auth defaults, host-key policy, and
+  forwarding rules
+* a quick-connect draft panel that builds launch previews for ad-hoc targets
+* a tool catalog for the other RusTTY binaries and their documentation paths
+* config diagnostics, sample-config creation, and path copy actions
 
 During the bootstrap phase, `rustty` also supports printing a sample RusTTY
 configuration file for schema review and repository validation.
@@ -71,6 +79,8 @@ Intentional differences must be recorded in changelogs and release notes.
 rustty
 ----
 
+The command above opens the native RusTTY launcher window.
+
 [source,text]
 ----
 rustty --help
@@ -118,9 +128,10 @@ rustty --import-putty-sessions ~/.putty/sessions --dry-run
 
 == Current Limits
 
-The bootstrap implementation does not yet open sessions; it currently provides
-the binary name, documentation contract, config bootstrap flows, host-key
-migration helpers, session import helper, and future workspace position.
+The current GUI launcher is real, but it is not yet a full embedded terminal
+client. Interactive session windows, terminal emulation, scrollback,
+copy/paste behavior, and live session lifecycle handling are still queued in
+the next `rustty` milestones.
 
 == Related Docs
 

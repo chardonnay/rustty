@@ -2,7 +2,7 @@
 
 use std::{
     fs,
-    io::{self, Write},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -12,7 +12,7 @@ use ssh_key::{
     public::{DsaPublicKey, EcdsaPublicKey, Ed25519PublicKey, KeyData, RsaPublicKey},
 };
 
-use crate::ConfigError;
+use crate::{ConfigError, text::read_text_with_bom};
 
 /// A stored host key that matched an exact RusTTY host and port lookup.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -312,7 +312,7 @@ pub fn import_putty_host_keys(
 ) -> Result<ImportPuttyHostKeysResult, ConfigError> {
     let source_path = source_path.as_ref().to_path_buf();
     let destination_path = destination_path.as_ref().to_path_buf();
-    let input = read_import_source_text(&source_path)?;
+    let input = read_text_with_bom(&source_path)?;
 
     let mut result = ImportPuttyHostKeysResult {
         source_path: source_path.clone(),
@@ -560,58 +560,6 @@ fn apply_putty_host_key_record(
     }
 
     Ok(())
-}
-
-fn read_import_source_text(path: &Path) -> Result<String, ConfigError> {
-    let bytes = fs::read(path).map_err(|source| ConfigError::Io {
-        path: path.to_path_buf(),
-        source,
-    })?;
-
-    if let Some(utf16) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        return decode_utf16_text(path, utf16, true);
-    }
-
-    if let Some(utf16) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        return decode_utf16_text(path, utf16, false);
-    }
-
-    String::from_utf8(bytes).map_err(|source| ConfigError::Io {
-        path: path.to_path_buf(),
-        source: io::Error::new(io::ErrorKind::InvalidData, source),
-    })
-}
-
-fn decode_utf16_text(
-    path: &Path,
-    bytes: &[u8],
-    little_endian: bool,
-) -> Result<String, ConfigError> {
-    if bytes.len() % 2 != 0 {
-        return Err(ConfigError::Io {
-            path: path.to_path_buf(),
-            source: io::Error::new(
-                io::ErrorKind::InvalidData,
-                "UTF-16 input has an odd number of bytes",
-            ),
-        });
-    }
-
-    let code_units = bytes
-        .chunks_exact(2)
-        .map(|pair| {
-            if little_endian {
-                u16::from_le_bytes([pair[0], pair[1]])
-            } else {
-                u16::from_be_bytes([pair[0], pair[1]])
-            }
-        })
-        .collect::<Vec<_>>();
-
-    String::from_utf16(&code_units).map_err(|source| ConfigError::Io {
-        path: path.to_path_buf(),
-        source: io::Error::new(io::ErrorKind::InvalidData, source),
-    })
 }
 
 fn parse_putty_registry_entry(line: &str) -> Option<(&str, &str)> {

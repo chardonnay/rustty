@@ -1,8 +1,8 @@
 = Session Import
 :toc:
 
-RusTTY plans to import PuTTY sessions as a migration path, but new edits and
-saves should land in a RusTTY-owned configuration format.
+RusTTY can now import PuTTY sessions as a migration path, but new edits and
+saves still land in a RusTTY-owned configuration format.
 
 == Migration Intent
 
@@ -10,15 +10,90 @@ saves should land in a RusTTY-owned configuration format.
 * Normalize imported values into RusTTY session types.
 * Preserve enough provenance to explain where a session came from.
 * Avoid silently writing back into PuTTY-managed storage after import.
+* Avoid overwriting an existing RusTTY session when an imported PuTTY session
+  name conflicts with different normalized data.
+
+== Supported Input
+
+The current bootstrap path accepts:
+
+* Windows `.reg` exports containing
+  `HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\...`
+* a Unix PuTTY `sessions/` directory such as `~/.putty/sessions`
+* a single Unix PuTTY session file from that directory
+
+Registry exports may use UTF-16 with BOM and are decoded automatically.
+
+== Imported Fields
+
+The current importer normalizes these PuTTY settings into RusTTY sessions:
+
+* session name from the registry section or Unix session filename
+* `Protocol`
+* `HostName`
+* `SerialLine`
+* `PortNumber`
+* `UserName`
+* `PublicKeyFile`
+* `PortForwardings`
+
+Imported sessions are marked with PuTTY provenance and stored as
+`putty_import_only` sessions inside RusTTY config storage.
 
 == Expected Flow
 
 . Discover legacy PuTTY sessions.
 . Parse them into RusTTY session types.
+. Merge them into the target RusTTY config without duplicating identical
+  sessions.
 . Surface import diagnostics to the user.
-. Save the imported result into RusTTY configuration storage.
+. Save the imported result into RusTTY configuration storage unless `--dry-run`
+  is used.
 
 == Compatibility Notes
 
 Some PuTTY-specific settings may need lossy translation. When that happens,
-RusTTY should record the decision in logs and user-facing migration output.
+RusTTY records the decision in the imported session `notes` field and in the
+user-facing import summary.
+
+Current intentional limits:
+
+* live Windows registry reads are not part of this bootstrap path; use a
+  `.reg` export instead
+* unsupported PuTTY protocols such as `supdup` are skipped
+* unlaunchable sessions such as bare `Default Settings` without a normalized
+  target are skipped
+* conflicting RusTTY session names are reported and skipped instead of being
+  overwritten
+* some PuTTY settings are only noted today instead of being translated,
+  including proxy settings, `RemoteCommand`, `NoPTY`, `TryAgent`, `AgentFwd`,
+  `UserNameFromEnvironment`, `SSHManualHostKeys`, and non-default
+  `SerialSpeed`
+
+== CLI Flow
+
+[source,text]
+----
+rustty --import-putty-sessions ~/.putty/sessions --dry-run
+----
+
+[source,text]
+----
+rustty --import-putty-sessions ~/Downloads/putty-sessions.reg
+----
+
+[source,text]
+----
+rustty --import-putty-sessions ~/.putty/sessions/Prod%20SSH --config /tmp/rustty.toml
+----
+
+The summary output includes:
+
+* source path
+* destination RusTTY config path
+* discovered sessions
+* newly imported sessions
+* already-present identical sessions
+* skipped blank/comment lines
+* skipped registry-export lines outside PuTTY session sections
+* skipped malformed, unsupported, unlaunchable, or conflicting sessions

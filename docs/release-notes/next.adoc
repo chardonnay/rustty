@@ -18,6 +18,10 @@
   `sshhostkeys` files into RusTTY-managed host-key storage, with UTF-16
   registry-export decoding and explicit skip reporting for unsupported keys.
   xref:../changelogs/rustty.adoc#rustty-hostkey-import[Changelog entry]
+* `rustty` can now import PuTTY sessions from Windows `.reg` exports, Unix
+  `sessions/` directories, and single Unix session files into RusTTY config
+  storage, with conflict-aware merge reporting and `--dry-run` support.
+  xref:../changelogs/rustty.adoc#rustty-session-import[Changelog entry]
 * The RusTTY config layer now includes default-path resolution and validated
   file persistence helpers.
   xref:../../CHANGELOG.adoc#suite-config-cli[Changelog entry]
@@ -49,6 +53,9 @@
 * RusTTY sessions can now also carry validated saved dynamic-forward listener
   definitions for `rusplink`.
   xref:../../CHANGELOG.adoc#suite-rusplink-dynamic-forwarding[Changelog entry]
+* RusTTY now includes a file-based PuTTY session migration helper that
+  preserves provenance and records lossy translation notes where needed.
+  xref:../../CHANGELOG.adoc#suite-session-import-migration[Changelog entry]
 
 === rusplink
 

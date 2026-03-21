@@ -26,6 +26,20 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
+    /// Builds an empty RusTTY configuration document with tool metadata.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            product_name: PRODUCT_NAME.to_owned(),
+            session_store: SessionStore {
+                default_format: StorageFormat::Rustty,
+                sessions: Vec::new(),
+            },
+            tool_profiles: ALL_TOOLS.into_iter().map(ToolProfile::from).collect(),
+        }
+    }
+
     /// Builds a sample configuration document for bootstrap review.
     #[must_use]
     pub fn sample() -> Self {
@@ -36,13 +50,11 @@ impl AppConfig {
             .with_port(22);
 
         Self {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            product_name: PRODUCT_NAME.to_owned(),
             session_store: SessionStore {
-                default_format: StorageFormat::Rustty,
                 sessions: vec![StoredSession::new(sample_session)],
+                ..Self::empty().session_store
             },
-            tool_profiles: ALL_TOOLS.into_iter().map(ToolProfile::from).collect(),
+            ..Self::empty()
         }
     }
 

@@ -95,7 +95,9 @@ branches can continue to work through the same queue without losing context.
 [#roadmap-import]
 === 11. PuTTY migration paths (`in_progress`)
 
-* PuTTY session import coverage
+* PuTTY session import coverage (`in_progress`)
+  Current bootstrap scope: PuTTY `.reg` export plus Unix session directory or
+  single-file import via `rustty`.
 * host-key import and compatibility helpers (`in_progress`)
   Current bootstrap scope: exact OpenSSH-style `known_hosts` import plus
   PuTTY `.reg` export and `sshhostkeys` import via `rustty`.

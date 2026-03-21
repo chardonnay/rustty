@@ -23,6 +23,8 @@ users migrate, but it does not promise a file-for-file or UI-for-UI clone.
 * Host-key migration already supports OpenSSH-style `known_hosts` files plus
   PuTTY `.reg` exports and Unix `sshhostkeys` files, but not live registry
   mutation.
+* Session migration already supports PuTTY `.reg` exports plus Unix session
+  directories and files, but not live registry mutation.
 
 == Tool Mapping
 

@@ -16,6 +16,17 @@
 * Added dedicated migration documentation for host-key import boundaries and
   current compatibility limits.
 
+[#rustty-session-import]
+=== PuTTY session import helpers
+
+* Added `--import-putty-sessions SOURCE [--config PATH] [--dry-run]` so
+  PuTTY Windows `.reg` exports, Unix `sessions/` directories, and single Unix
+  session files can be merged into RusTTY config storage.
+* Added conflict-aware merge reporting so identical sessions are recognized,
+  conflicting names are skipped, and dry runs remain reviewable.
+* Added dedicated migration documentation for supported session fields,
+  current translation limits, and lossy-import notes.
+
 [#rustty-session-auth-defaults]
 === Session auth defaults in sample config
 

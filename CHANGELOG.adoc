@@ -158,6 +158,18 @@ This file tracks suite-level milestones. Tool-specific details live under
   boundary: OpenSSH `known_hosts` plus file-based PuTTY exports, but not live
   Windows registry reads.
 
+[#suite-session-import-migration]
+=== Session import migration
+
+* Added an explicit `rustty` migration helper for importing PuTTY sessions
+  from Windows `.reg` exports, Unix `sessions/` directories, and single Unix
+  session files into RusTTY config storage.
+* Added conflict-aware merge reporting so identical sessions are recognized,
+  conflicting names are skipped, and dry-run imports remain reviewable.
+* Added lossy-translation notes for PuTTY settings that are not yet modeled in
+  RusTTY, including proxy settings, `RemoteCommand`, and selected SSH or
+  serial preferences.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

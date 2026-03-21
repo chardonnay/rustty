@@ -1,6 +1,6 @@
 use std::{
     env,
-    io::{self, Write},
+    io::{self, BufRead, IsTerminal, Write},
     path::PathBuf,
     process,
 };
@@ -14,8 +14,9 @@ use rustty_core::{
 };
 use rustty_transport::{
     HostKeyCheck, SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshLocalForwardSpec,
-    SshRemoteForwardSpec, SshShellRequest, TerminalSize, VerifiedHostKey, VerifiedHostKeySource,
-    execute_ssh_command, run_interactive_shell,
+    SshRemoteForwardSpec, SshShellRequest, TerminalSize, TransportError, VerifiedHostKey,
+    VerifiedHostKeySource, execute_ssh_command, host_key_fingerprint, probe_ssh_host_key,
+    run_interactive_shell,
 };
 
 const DEFAULT_PASSWORD_ENV: &str = "RUSTTY_SSH_PASSWORD";
@@ -50,8 +51,9 @@ Notes:
   Keyboard-interactive responses are read from an environment variable with one
   response per line.
   Host keys are verified against the RusTTY known-hosts file. `accept_new`
-  sessions persist the first trusted server key automatically; `ask` still
-  needs a pre-trusted key because interactive confirmation is not implemented.
+  sessions persist the first trusted server key automatically; `ask` sessions
+  can now probe, confirm, and optionally persist an unknown server key from an
+  interactive terminal.
   Use --unsafe-accept-host-key only for disposable/bootstrap testing.
 ";
 
@@ -134,6 +136,19 @@ enum PlanOrigin {
 enum RunOutcome {
     Success,
     RemoteExit(u32),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ResolvedHostKeyCheck {
+    host_key_check: HostKeyCheck,
+    persist_host_key: Option<VerifiedHostKey>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UnknownHostKeyDecision {
+    StoreAndContinue,
+    ContinueOnce,
+    Cancel,
 }
 
 fn main() {
@@ -841,12 +856,27 @@ where
     W: Write,
     E: Write,
 {
-    let host_key_check = resolve_host_key_check(plan)?;
+    let stdin = io::stdin();
+    let prompt_available = stdin.is_terminal() && io::stderr().is_terminal();
+    let mut prompt_reader = io::BufReader::new(stdin.lock());
+    let resolved_host_key = resolve_execution_host_key_check(
+        plan,
+        &mut prompt_reader,
+        error_writer,
+        prompt_available,
+        |host, port| {
+            probe_ssh_host_key(host, port).map_err(|error| render_transport_error(plan, &error))
+        },
+    )?;
     let username = resolve_execution_username(plan.username.as_deref())?;
     let authentication_methods = resolve_authentication_methods(plan)?;
     let local_forwards = resolve_local_forward_specs(&plan.port_forwards)?;
     let remote_forwards = resolve_remote_forward_specs(&plan.remote_forwards)?;
     let dynamic_forwards = resolve_dynamic_forward_specs(&plan.dynamic_forwards)?;
+    let ResolvedHostKeyCheck {
+        host_key_check,
+        persist_host_key,
+    } = resolved_host_key;
 
     if plan.remote_command.is_empty() {
         let request = SshShellRequest {
@@ -861,9 +891,18 @@ where
             dynamic_forwards,
             host_key_check,
         };
-        let result = run_interactive_shell(&request)
-            .map_err(|error| format!("rusplink SSH transport failed: {error}"))?;
-        persist_accepted_host_key(plan, &result.verified_host_key, error_writer)?;
+        let result = run_interactive_shell(&request).map_err(|error| {
+            format!(
+                "rusplink SSH transport failed: {}",
+                render_transport_error(plan, &error)
+            )
+        })?;
+        persist_accepted_host_key(
+            plan,
+            &result.verified_host_key,
+            persist_host_key.as_ref(),
+            error_writer,
+        )?;
         return Ok(RunOutcome::RemoteExit(result.exit_status));
     }
 
@@ -878,9 +917,18 @@ where
         dynamic_forwards,
         host_key_check,
     };
-    let result = execute_ssh_command(&request)
-        .map_err(|error| format!("rusplink SSH transport failed: {error}"))?;
-    persist_accepted_host_key(plan, &result.verified_host_key, error_writer)?;
+    let result = execute_ssh_command(&request).map_err(|error| {
+        format!(
+            "rusplink SSH transport failed: {}",
+            render_transport_error(plan, &error)
+        )
+    })?;
+    persist_accepted_host_key(
+        plan,
+        &result.verified_host_key,
+        persist_host_key.as_ref(),
+        error_writer,
+    )?;
 
     writer
         .write_all(&result.stdout)
@@ -1305,9 +1353,37 @@ fn split_keyboard_interactive_responses(raw_value: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 fn resolve_host_key_check(plan: &ConnectionPlan) -> Result<HostKeyCheck, String> {
+    let mut prompt_reader = io::Cursor::new(Vec::new());
+    let mut prompt_writer = Vec::new();
+    resolve_execution_host_key_check(
+        plan,
+        &mut prompt_reader,
+        &mut prompt_writer,
+        false,
+        |_host, _port| Err("unexpected SSH host-key probe".to_owned()),
+    )
+    .map(|resolved| resolved.host_key_check)
+}
+
+fn resolve_execution_host_key_check<R, W, P>(
+    plan: &ConnectionPlan,
+    prompt_reader: &mut R,
+    prompt_writer: &mut W,
+    prompt_available: bool,
+    probe_host_key: P,
+) -> Result<ResolvedHostKeyCheck, String>
+where
+    R: BufRead,
+    W: Write,
+    P: FnOnce(&str, u16) -> Result<VerifiedHostKey, String>,
+{
     if plan.unsafe_accept_host_key {
-        return Ok(HostKeyCheck::AcceptAny);
+        return Ok(ResolvedHostKeyCheck {
+            host_key_check: HostKeyCheck::AcceptAny,
+            persist_host_key: None,
+        });
     }
 
     let known_host_keys = load_known_host_keys(&plan.known_hosts_path, &plan.host, plan.port)
@@ -1318,19 +1394,119 @@ fn resolve_host_key_check(plan: &ConnectionPlan) -> Result<HostKeyCheck, String>
         .collect::<Vec<_>>();
 
     if !trusted_keys.is_empty() {
-        return Ok(HostKeyCheck::RequireMatch(trusted_keys));
+        return Ok(ResolvedHostKeyCheck {
+            host_key_check: HostKeyCheck::RequireMatch(trusted_keys),
+            persist_host_key: None,
+        });
     }
 
     match plan.host_key_policy {
-        HostKeyPolicy::Ask => Err(format!(
-            "interactive host-key confirmation is not implemented yet and no trusted key was found in {}; rerun with --dry-run or --unsafe-accept-host-key",
-            plan.known_hosts_path.display()
-        )),
+        HostKeyPolicy::Ask => {
+            if !prompt_available {
+                return Err(format!(
+                    "interactive host-key confirmation for {}:{} requires a terminal because no trusted key was found in {}; rerun in a terminal, preseed the known-hosts file, switch the session to accept_new, or use --unsafe-accept-host-key for disposable testing",
+                    plan.host,
+                    plan.port,
+                    plan.known_hosts_path.display()
+                ));
+            }
+
+            let probed_host_key = probe_host_key(&plan.host, plan.port).map_err(|error| {
+                format!(
+                    "failed to probe the SSH host key for {}:{} before prompting: {error}",
+                    plan.host, plan.port
+                )
+            })?;
+            match prompt_unknown_host_key(prompt_reader, prompt_writer, plan, &probed_host_key)? {
+                UnknownHostKeyDecision::StoreAndContinue => Ok(ResolvedHostKeyCheck {
+                    host_key_check: HostKeyCheck::RequireMatch(vec![
+                        probed_host_key.public_key.clone(),
+                    ]),
+                    persist_host_key: Some(probed_host_key),
+                }),
+                UnknownHostKeyDecision::ContinueOnce => Ok(ResolvedHostKeyCheck {
+                    host_key_check: HostKeyCheck::RequireMatch(vec![
+                        probed_host_key.public_key.clone(),
+                    ]),
+                    persist_host_key: None,
+                }),
+                UnknownHostKeyDecision::Cancel => {
+                    Err("host-key confirmation cancelled by user".to_owned())
+                }
+            }
+        }
         HostKeyPolicy::Strict => Err(format!(
             "strict host-key verification requires a trusted key in {}; rerun with --dry-run or --unsafe-accept-host-key",
             plan.known_hosts_path.display()
         )),
-        HostKeyPolicy::AcceptNew => Ok(HostKeyCheck::TrustOnFirstUse),
+        HostKeyPolicy::AcceptNew => Ok(ResolvedHostKeyCheck {
+            host_key_check: HostKeyCheck::TrustOnFirstUse,
+            persist_host_key: None,
+        }),
+    }
+}
+
+fn prompt_unknown_host_key<R, W>(
+    prompt_reader: &mut R,
+    prompt_writer: &mut W,
+    plan: &ConnectionPlan,
+    probed_host_key: &VerifiedHostKey,
+) -> Result<UnknownHostKeyDecision, String>
+where
+    R: BufRead,
+    W: Write,
+{
+    writeln!(
+        prompt_writer,
+        "The server {}:{} is not trusted yet.",
+        plan.host, plan.port
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        prompt_writer,
+        "Known-hosts file: {}",
+        plan.known_hosts_path.display()
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        prompt_writer,
+        "Server host-key fingerprint (SHA256): {}",
+        host_key_fingerprint(&probed_host_key.public_key)
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        prompt_writer,
+        "Trust options: [s] store and continue, [o] continue once, [n] cancel."
+    )
+    .map_err(|error| error.to_string())?;
+
+    loop {
+        write!(prompt_writer, "Trust this host key? [s/o/n]: ")
+            .map_err(|error| error.to_string())?;
+        prompt_writer.flush().map_err(|error| error.to_string())?;
+
+        let mut response = String::new();
+        let read_bytes = prompt_reader
+            .read_line(&mut response)
+            .map_err(|error| error.to_string())?;
+        if read_bytes == 0 {
+            return Err("interactive host-key confirmation aborted without an answer".to_owned());
+        }
+
+        if let Some(decision) = parse_unknown_host_key_decision(&response) {
+            return Ok(decision);
+        }
+
+        writeln!(prompt_writer, "Please answer s, o, or n.").map_err(|error| error.to_string())?;
+    }
+}
+
+fn parse_unknown_host_key_decision(input: &str) -> Option<UnknownHostKeyDecision> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "s" | "store" | "save" => Some(UnknownHostKeyDecision::StoreAndContinue),
+        "o" | "once" | "continue" => Some(UnknownHostKeyDecision::ContinueOnce),
+        "n" | "no" | "cancel" | "abort" => Some(UnknownHostKeyDecision::Cancel),
+        _ => None,
     }
 }
 
@@ -1350,23 +1526,31 @@ fn resolve_terminal_size() -> Result<TerminalSize, String> {
 fn persist_accepted_host_key<E>(
     plan: &ConnectionPlan,
     verified_host_key: &VerifiedHostKey,
+    persist_host_key: Option<&VerifiedHostKey>,
     error_writer: &mut E,
 ) -> Result<(), String>
 where
     E: Write,
 {
-    if plan.unsafe_accept_host_key
-        || plan.host_key_policy != HostKeyPolicy::AcceptNew
-        || verified_host_key.source != VerifiedHostKeySource::TrustOnFirstUse
-    {
+    if plan.unsafe_accept_host_key {
         return Ok(());
     }
+
+    let host_key_to_persist = if let Some(persist_host_key) = persist_host_key {
+        &persist_host_key.public_key
+    } else if plan.host_key_policy == HostKeyPolicy::AcceptNew
+        && verified_host_key.source == VerifiedHostKeySource::TrustOnFirstUse
+    {
+        &verified_host_key.public_key
+    } else {
+        return Ok(());
+    };
 
     let persist_result = persist_known_host_key(
         &plan.known_hosts_path,
         &plan.host,
         plan.port,
-        &verified_host_key.public_key,
+        host_key_to_persist,
     )
     .map_err(|error| error.to_string())?;
 
@@ -1501,8 +1685,27 @@ fn render_transport_host_key_check(plan: &ConnectionPlan) -> &'static str {
         "unsafe_accept_any"
     } else if plan.host_key_policy == HostKeyPolicy::AcceptNew {
         "known_hosts_or_accept_new"
+    } else if plan.host_key_policy == HostKeyPolicy::Ask {
+        "known_hosts_or_prompt"
     } else {
         "known_hosts_required"
+    }
+}
+
+fn render_transport_error(plan: &ConnectionPlan, error: &TransportError) -> String {
+    match error {
+        TransportError::HostKeyMismatch {
+            actual_fingerprint,
+            expected_fingerprints,
+        } => format!(
+            "server host key mismatch for {}:{}; expected one of [{}] from {}, got {}; inspect or update the trusted entry before retrying",
+            plan.host,
+            plan.port,
+            expected_fingerprints.join(", "),
+            plan.known_hosts_path.display(),
+            actual_fingerprint
+        ),
+        _ => error.to_string(),
     }
 }
 
@@ -1696,22 +1899,25 @@ fn dynamic_forward_usage_message(raw_spec: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::{
+        io,
         path::PathBuf,
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use rustty_config::{AppConfig, StoredSession, save_config};
+    use rustty_config::{AppConfig, StoredSession, load_known_host_keys, save_config};
     use rustty_core::{
         DynamicForwardSpec, PortForwardSpec, Protocol, RemoteForwardSpec, SessionConfig,
     };
+    use rustty_transport::{VerifiedHostKey, VerifiedHostKeySource};
 
     use super::{
         Command, DEFAULT_PASSWORD_ENV, DirectTarget, PlanRequest, RunOutcome, SshAuthentication,
         run,
     };
     use crate::{
-        InvocationTarget, normalize_private_key_path, parse_command, render_remote_command,
-        resolve_authentication_methods, resolve_host_key_check,
+        InvocationTarget, UnknownHostKeyDecision, normalize_private_key_path, parse_command,
+        persist_accepted_host_key, prompt_unknown_host_key, render_remote_command,
+        resolve_authentication_methods, resolve_execution_host_key_check, resolve_host_key_check,
         split_keyboard_interactive_responses,
     };
 
@@ -2208,6 +2414,7 @@ mod tests {
         assert!(output.contains(&format!("known_hosts_path={}", known_hosts_path.display())));
         assert!(output.contains("authentication_methods=password"));
         assert!(output.contains("password_env=RUSTTY_TEST_PASSWORD"));
+        assert!(output.contains("transport_host_key_check=known_hosts_or_prompt"));
         assert!(output.contains("command=uptime"));
         assert!(output.contains("port_forwards=0"));
         assert!(output.contains("remote_forwards=0"));
@@ -2540,7 +2747,7 @@ mod tests {
     }
 
     #[test]
-    fn live_execution_requires_explicit_host_key_override_for_bootstrap() {
+    fn live_execution_requires_terminal_for_unknown_ask_host_confirmation() {
         let known_hosts_path = temporary_workspace().join("known_hosts");
         let error = run(
             [
@@ -2553,13 +2760,14 @@ mod tests {
             &mut Vec::new(),
             &mut Vec::new(),
         )
-        .expect_err("host-key confirmation should be required");
+        .expect_err("host-key confirmation should require a terminal in tests");
 
-        assert!(error.contains("--unsafe-accept-host-key"));
+        assert!(error.contains("requires a terminal"));
+        assert!(error.contains("accept_new"));
     }
 
     #[test]
-    fn interactive_shell_requires_trusted_host_key_when_policy_is_ask() {
+    fn interactive_shell_requires_terminal_for_unknown_ask_host_confirmation() {
         let known_hosts_path = temporary_workspace().join("known_hosts");
         let error = run(
             [
@@ -2570,9 +2778,9 @@ mod tests {
             &mut Vec::new(),
             &mut Vec::new(),
         )
-        .expect_err("interactive shells should require host-key trust before connecting");
+        .expect_err("interactive shells should require a terminal for host-key prompts");
 
-        assert!(error.contains("interactive host-key confirmation is not implemented yet"));
+        assert!(error.contains("requires a terminal"));
         assert!(error.contains("known_hosts"));
     }
 
@@ -2619,6 +2827,114 @@ mod tests {
                 panic!("expected stored known-host verification")
             }
         }
+    }
+
+    #[test]
+    fn resolve_execution_host_key_check_can_store_a_prompted_host_key() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let plan = sample_connection_plan(known_hosts_path);
+        let probed_host_key = sample_verified_host_key();
+        let mut prompt_reader = io::Cursor::new(b"s\n".to_vec());
+        let mut prompt_output = Vec::new();
+
+        let resolved = resolve_execution_host_key_check(
+            &plan,
+            &mut prompt_reader,
+            &mut prompt_output,
+            true,
+            |_host, _port| Ok(probed_host_key.clone()),
+        )
+        .expect("prompted host-key flow should resolve");
+
+        match resolved.host_key_check {
+            rustty_transport::HostKeyCheck::RequireMatch(keys) => {
+                assert_eq!(keys, vec![probed_host_key.public_key.clone()]);
+            }
+            rustty_transport::HostKeyCheck::AcceptAny
+            | rustty_transport::HostKeyCheck::TrustOnFirstUse => {
+                panic!("expected pinned host-key verification")
+            }
+        }
+        assert_eq!(resolved.persist_host_key.as_ref(), Some(&probed_host_key));
+        let prompt_output =
+            String::from_utf8(prompt_output).expect("prompt output should be UTF-8");
+        assert!(prompt_output.contains("store and continue"));
+        assert!(prompt_output.contains("Server host-key fingerprint (SHA256):"));
+    }
+
+    #[test]
+    fn resolve_execution_host_key_check_can_continue_once_without_persisting() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let plan = sample_connection_plan(known_hosts_path);
+        let probed_host_key = sample_verified_host_key();
+        let mut prompt_reader = io::Cursor::new(b"o\n".to_vec());
+        let mut prompt_output = Vec::new();
+
+        let resolved = resolve_execution_host_key_check(
+            &plan,
+            &mut prompt_reader,
+            &mut prompt_output,
+            true,
+            |_host, _port| Ok(probed_host_key.clone()),
+        )
+        .expect("continue-once host-key flow should resolve");
+
+        match resolved.host_key_check {
+            rustty_transport::HostKeyCheck::RequireMatch(keys) => {
+                assert_eq!(keys, vec![probed_host_key.public_key.clone()]);
+            }
+            rustty_transport::HostKeyCheck::AcceptAny
+            | rustty_transport::HostKeyCheck::TrustOnFirstUse => {
+                panic!("expected pinned host-key verification")
+            }
+        }
+        assert_eq!(resolved.persist_host_key, None);
+    }
+
+    #[test]
+    fn prompt_unknown_host_key_reprompts_after_invalid_input() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let plan = sample_connection_plan(known_hosts_path);
+        let probed_host_key = sample_verified_host_key();
+        let mut prompt_reader = io::Cursor::new(b"later\nstore\n".to_vec());
+        let mut prompt_output = Vec::new();
+
+        let decision = prompt_unknown_host_key(
+            &mut prompt_reader,
+            &mut prompt_output,
+            &plan,
+            &probed_host_key,
+        )
+        .expect("prompt should accept a later valid answer");
+
+        assert_eq!(decision, UnknownHostKeyDecision::StoreAndContinue);
+        let prompt_output =
+            String::from_utf8(prompt_output).expect("prompt output should be UTF-8");
+        assert!(prompt_output.contains("Please answer s, o, or n."));
+    }
+
+    #[test]
+    fn persist_accepted_host_key_can_store_prompted_keys() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let plan = sample_connection_plan(known_hosts_path.clone());
+        let probed_host_key = sample_verified_host_key();
+        let verified_host_key = sample_verified_host_key();
+        let mut error_output = Vec::new();
+
+        persist_accepted_host_key(
+            &plan,
+            &verified_host_key,
+            Some(&probed_host_key),
+            &mut error_output,
+        )
+        .expect("prompted host key should persist");
+
+        let stored_keys = load_known_host_keys(&known_hosts_path, "example.com", 22)
+            .expect("stored key should load");
+        assert_eq!(stored_keys.len(), 1);
+        assert_eq!(stored_keys[0].public_key, probed_host_key.public_key);
+        let error_output = String::from_utf8(error_output).expect("stderr should be UTF-8");
+        assert!(error_output.contains("trusted new host key"));
     }
 
     #[test]
@@ -2792,6 +3108,49 @@ mod tests {
             .map(|value| ("HOME", value))
             .or_else(|_| std::env::var("USERPROFILE").map(|value| ("USERPROFILE", value)))
             .expect("HOME or USERPROFILE should be available during tests")
+    }
+
+    fn sample_connection_plan(known_hosts_path: PathBuf) -> super::ConnectionPlan {
+        super::ConnectionPlan {
+            origin: super::PlanOrigin::Direct,
+            config_path: None,
+            known_hosts_path,
+            session_name: None,
+            protocol: Protocol::Ssh,
+            username: Some("ops".to_owned()),
+            host: "example.com".to_owned(),
+            port: 22,
+            remote_command: vec!["uptime".to_owned()],
+            host_key_policy: rustty_core::HostKeyPolicy::Ask,
+            port_forwards: Vec::new(),
+            remote_forwards: Vec::new(),
+            dynamic_forwards: Vec::new(),
+            saved_in: None,
+            imported_from: None,
+            private_key_path: None,
+            key_passphrase_env: None,
+            use_agent: false,
+            agent_socket_path: None,
+            keyboard_interactive_env_var: None,
+            password_env_var: Some(DEFAULT_PASSWORD_ENV.to_owned()),
+            unsafe_accept_host_key: false,
+        }
+    }
+
+    fn sample_verified_host_key() -> VerifiedHostKey {
+        let known_hosts_path = temporary_workspace().join("sample_known_hosts");
+        std::fs::write(
+            &known_hosts_path,
+            "example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti\n",
+        )
+        .expect("sample known-hosts file should be written");
+
+        let mut stored_keys = load_known_host_keys(&known_hosts_path, "example.com", 22)
+            .expect("sample key should load");
+        VerifiedHostKey {
+            public_key: stored_keys.remove(0).public_key,
+            source: VerifiedHostKeySource::UnsafeAcceptAny,
+        }
     }
 
     fn write_config(config: AppConfig) -> PathBuf {

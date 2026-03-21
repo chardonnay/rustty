@@ -6,5 +6,5 @@ pub use ssh::{
     HostKeyCheck, SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshExecResult,
     SshLocalForwardSpec, SshRemoteForwardSpec, SshShellRequest, SshShellResult, TerminalSize,
     TransportError, VerifiedHostKey, VerifiedHostKeySource, execute_ssh_command,
-    run_interactive_shell,
+    host_key_fingerprint, probe_ssh_host_key, run_interactive_shell,
 };

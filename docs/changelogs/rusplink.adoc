@@ -2,6 +2,19 @@
 
 == Unreleased
 
+[#rusplink-hostkey-prompts]
+=== Host-key prompts and mismatch diagnostics
+
+* Added an interactive `ask` host-key flow for unknown servers that probes the
+  presented key, prints its SHA-256 fingerprint, and lets operators store
+  trust, continue once, or cancel.
+* Pinned prompted `ask` sessions to the probed key for the real SSH
+  connection, so the live session cannot silently switch to a different host
+  key after the prompt.
+* Improved host-key mismatch diagnostics so operators now see the expected and
+  presented fingerprints together with the `known_hosts` path that requires
+  review.
+
 [#rusplink-putty-ppk-auth]
 === PuTTY PPK private-key authentication
 
@@ -91,8 +104,6 @@
   for `accept_new` SSH sessions.
 * Added interactive SSH shell support with remote PTY allocation when no
   remote command is supplied.
-* Continued to keep `ask` conservative for unknown hosts: stored host keys are
-  accepted, but interactive trust prompts remain intentionally unimplemented.
 
 [#rusplink-ssh-exec-transport]
 === SSH exec transport

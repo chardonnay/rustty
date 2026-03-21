@@ -82,8 +82,8 @@ The workspace currently provides:
 * a session-aware `rusplink` CLI with dry-run planning, bootstrap SSH exec
   transport, OpenSSH and PuTTY PPK public-key auth, SSH-agent,
   keyboard-interactive, and password authentication, local TCP forwarding,
-  remote TCP forwarding, dynamic SOCKS forwarding, known-host persistence, and
-  interactive shell support,
+  remote TCP forwarding, dynamic SOCKS forwarding, known-host persistence,
+  interactive host-key prompts, and interactive shell support,
 * a Unix-oriented `rusagent` bootstrap CLI that can serve an SSH-agent socket,
   preload OpenSSH or PuTTY PPK identities, add identities to a running agent,
   and list agent-exposed public keys,

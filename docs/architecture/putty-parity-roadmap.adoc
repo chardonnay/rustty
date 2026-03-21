@@ -31,12 +31,12 @@ branches can continue to work through the same queue without losing context.
 * remote port forwarding (`done`)
 
 [#roadmap-rusplink-advanced-auth]
-=== 3. rusplink advanced SSH auth and compatibility (`in_progress`)
+=== 3. rusplink advanced SSH auth and compatibility (`done`)
 
 * SSH agent authentication through `rusagent` (`done`)
 * PuTTY `PPK` input for SSH private-key auth (`done`)
 * keyboard-interactive auth (`done`)
-* stricter host-key UI and compatibility prompts
+* stricter host-key UI and compatibility prompts (`done`)
 
 [#roadmap-rustty-gui]
 === 4. rustty GUI session window (`next`)

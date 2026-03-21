@@ -26,13 +26,13 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 * remote TCP forwarding through SSH `tcpip-forward`
 * dynamic SOCKS5 forwarding through SSH `direct-tcpip`
 * interactive SSH shell transport with remote PTY allocation
-* OpenSSH-style known-host lookup and append-only persistence
+* OpenSSH-style known-host lookup, interactive `ask` prompts, and append-only
+  persistence
 * remote-command capture after `--`
 * compatibility-oriented reuse of imported PuTTY session metadata
 
 == Planned Capability Profile
 
-* richer host-key prompts and compatibility flows
 * compatibility-oriented import of legacy PuTTY sessions
 * SSH agent forwarding and non-Unix agent integrations
 
@@ -146,12 +146,22 @@ known-hosts file:
   current invocation.
 * `strict` requires at least one exact stored key match for the resolved host
   and port.
-* `ask` also accepts stored exact matches, but still errors for unknown hosts
-  because interactive confirmation is not implemented yet.
+* `ask` accepts stored exact matches and, from an interactive terminal, probes
+  and displays the remote SHA-256 host-key fingerprint before letting the
+  operator store trust, continue once, or cancel.
 * `accept_new` accepts a first-seen host key and persists it to the
   known-hosts file after a successful bootstrap session.
 * `--unsafe-accept-host-key` still bypasses verification for disposable
   testing, but it does not persist trust.
+
+If `ask` encounters an unknown host outside an interactive terminal, `rusplink`
+fails closed and explains how to proceed: preseed `known_hosts`, switch the
+session policy to `accept_new`, or use `--unsafe-accept-host-key` only for
+disposable testing.
+
+When a stored key no longer matches the server, `rusplink` now surfaces a
+compatibility-oriented mismatch error that includes the expected and presented
+SHA-256 fingerprints plus the `known_hosts` path that needs review.
 
 The current bootstrap lookup intentionally matches exact host and `host:port`
 entries that RusTTY writes itself. Wildcards, negations, markers, and hashed
@@ -202,6 +212,8 @@ paths, key-passphrase environment variable names, keyboard-interactive
 environment variable names, password environment variable names, plus
 local-forward, remote-forward, and dynamic-forward counts so operators can
 review reusable auth defaults without opening the TOML file manually.
+Interactive host-key prompts are written to standard error so command output on
+standard output remains script-friendly.
 
 == Compatibility Notes
 

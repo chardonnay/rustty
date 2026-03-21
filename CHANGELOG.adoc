@@ -131,6 +131,18 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added interactive SSH shell support with remote PTY allocation when
   `rusplink` runs without a remote command.
 
+[#suite-rusplink-hostkey-prompts]
+=== rusplink host-key prompts
+
+* Added an interactive `ask` host-key flow that probes unknown server keys,
+  prints their SHA-256 fingerprints, and lets operators store trust, continue
+  once, or cancel.
+* Pinned prompted `ask` sessions to the probed server key for the real SSH
+  connection so the verified host key cannot change silently between prompt
+  and login.
+* Improved stale-key mismatch diagnostics so RusTTY now points operators at
+  the exact `known_hosts` file that needs review.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

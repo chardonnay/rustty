@@ -465,6 +465,17 @@ pub fn run_interactive_shell(request: &SshShellRequest) -> Result<SshShellResult
     runtime()?.block_on(async_run_interactive_shell(request))
 }
 
+/// Probes the remote SSH server and returns the presented host key without
+/// attempting authentication.
+pub fn probe_ssh_host_key(host: &str, port: u16) -> Result<VerifiedHostKey, TransportError> {
+    runtime()?.block_on(async_probe_ssh_host_key(host, port))
+}
+
+/// Renders a stable SHA-256 fingerprint string for a host key.
+pub fn host_key_fingerprint(public_key: &PublicKey) -> String {
+    fingerprint(public_key)
+}
+
 async fn async_execute_ssh_command(
     request: &SshExecRequest,
 ) -> Result<SshExecResult, TransportError> {
@@ -708,6 +719,17 @@ async fn async_run_interactive_shell(
     })
 }
 
+async fn async_probe_ssh_host_key(
+    host: &str,
+    port: u16,
+) -> Result<VerifiedHostKey, TransportError> {
+    let (forward_request_sender, _) = mpsc::unbounded_channel();
+    let (mut session, verified_host_key) =
+        connect_session(host, port, &HostKeyCheck::AcceptAny, forward_request_sender).await?;
+    disconnect_session(&mut session, "rusplink host-key probe completed").await;
+    Ok(verified_host_key)
+}
+
 fn runtime() -> Result<tokio::runtime::Runtime, TransportError> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -720,6 +742,19 @@ async fn connect_authenticated_session(
     port: u16,
     username: &str,
     authentication_methods: &[SshAuthentication],
+    host_key_check: &HostKeyCheck,
+    forward_request_sender: mpsc::UnboundedSender<ForwardConnectionRequest>,
+) -> Result<(client::Handle<ClientHandler>, VerifiedHostKey), TransportError> {
+    let (mut session, verified_host_key) =
+        connect_session(host, port, host_key_check, forward_request_sender).await?;
+    authenticate_session(&mut session, username, authentication_methods).await?;
+
+    Ok((session, verified_host_key))
+}
+
+async fn connect_session(
+    host: &str,
+    port: u16,
     host_key_check: &HostKeyCheck,
     forward_request_sender: mpsc::UnboundedSender<ForwardConnectionRequest>,
 ) -> Result<(client::Handle<ClientHandler>, VerifiedHostKey), TransportError> {
@@ -736,10 +771,9 @@ async fn connect_authenticated_session(
     };
 
     let address = (host, port);
-    let mut session = client::connect(config, address, handler)
+    let session = client::connect(config, address, handler)
         .await
         .map_err(|source| map_connect_error(source, &state))?;
-    authenticate_session(&mut session, username, authentication_methods).await?;
 
     let verified_host_key = lock_state(&state)
         .verified_host_key
@@ -1686,7 +1720,7 @@ mod tests {
         HostKeyCheck, SOCKS_ADDRESS_DOMAIN, SOCKS_ADDRESS_IPV4, SOCKS_ADDRESS_IPV6,
         SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshLocalForwardSpec,
         SshRemoteForwardSpec, TerminalSize, TransportError, VerifiedHostKeySource,
-        decode_socks5_host, execute_ssh_command, load_private_key_file,
+        decode_socks5_host, execute_ssh_command, host_key_fingerprint, load_private_key_file,
     };
 
     const PPK_FIXTURE: &str = include_str!("../../../tests/fixtures/keys/id_ed25519.ppk");
@@ -1747,6 +1781,19 @@ mod tests {
         assert_eq!(
             VerifiedHostKeySource::KnownHosts,
             VerifiedHostKeySource::KnownHosts
+        );
+    }
+
+    #[test]
+    fn host_key_fingerprint_uses_sha256_format() {
+        let public_key = PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti",
+        )
+        .expect("sample key should parse");
+
+        assert_eq!(
+            host_key_fingerprint(&public_key),
+            "SHA256:UCUiLr7Pjs9wFFJMDByLgc3NrtdU344OgUM45wZPcIQ"
         );
     }
 

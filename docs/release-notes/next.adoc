@@ -78,9 +78,10 @@
   host keys, persist first-seen keys for `accept_new`, and open interactive
   SSH shells with a remote PTY.
   xref:../changelogs/rusplink.adoc#rusplink-known-hosts-shell[Changelog entry]
-* `ask` host-key policy remains conservative for unknown hosts and still does
-  not offer an interactive trust prompt.
-  xref:../changelogs/rusplink.adoc#rusplink-known-hosts-shell[Changelog entry]
+* `rusplink` now offers an interactive `ask` host-key prompt for unknown
+  servers, with SHA-256 fingerprint display, store-or-once trust decisions,
+  and clearer mismatch diagnostics for stale `known_hosts` entries.
+  xref:../changelogs/rusplink.adoc#rusplink-hostkey-prompts[Changelog entry]
 
 === rusagent
 

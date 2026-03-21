@@ -17,6 +17,12 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added GUI-visible diagnostics and a tool catalog for documentation and
   release-tracking paths.
 
+[#suite-rustty-gui-command-runner]
+=== rustty launcher command runner
+
+* Added a launcher-side SSH command runner for saved SSH sessions, including
+  GUI host-key confirmation and captured command output.
+
 [#suite-config-foundation]
 === Configuration foundation
 

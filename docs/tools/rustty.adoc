@@ -28,6 +28,8 @@ The current launcher window provides:
 * a saved-session browser with search and provenance display
 * a selected-session detail pane for auth defaults, host-key policy, and
   forwarding rules
+* a launcher-side SSH command runner for saved SSH sessions, including
+  host-key confirmation and captured output
 * a quick-connect draft panel that builds launch previews for ad-hoc targets
 * a tool catalog for the other RusTTY binaries and their documentation paths
 * config diagnostics, sample-config creation, and path copy actions
@@ -53,6 +55,12 @@ configuration in RusTTY-owned storage.
 The current sample config now demonstrates session-level SSH defaults such as
 stored usernames and password environment variable names, so future GUI editing
 work has a concrete schema target from the beginning.
+
+The launcher-side SSH command runner currently reuses saved session values for
+`username`, `private_key_path`, `key_passphrase_env`,
+`keyboard_interactive_env`, and `password_env`. Unknown SSH host keys are
+surfaced directly in the GUI so the operator can trust once, trust and save, or
+cancel before credentials are sent.
 
 Host-key migration currently runs through `rustty --import-known-hosts` for
 OpenSSH files and `rustty --import-putty-host-keys` for PuTTY exports. Both
@@ -126,12 +134,27 @@ rustty --import-putty-host-keys ~/Downloads/putty-hostkeys.reg --dry-run
 rustty --import-putty-sessions ~/.putty/sessions --dry-run
 ----
 
+Within the launcher window:
+
+. Select a saved SSH session.
+. Enter a remote command in the `SSH command runner` field.
+. Confirm the host key if RusTTY prompts for first contact.
+. Review stdout, stderr, exit status, and host-key source directly in the GUI.
+
 == Current Limits
 
 The current GUI launcher is real, but it is not yet a full embedded terminal
 client. Interactive session windows, terminal emulation, scrollback,
 copy/paste behavior, and live session lifecycle handling are still queued in
 the next `rustty` milestones.
+
+The launcher-side command runner is intentionally smaller than the full CLI:
+
+* it currently runs non-interactive commands for saved SSH sessions only
+* it does not yet expose SSH-agent auth, forwarding overrides, or ad-hoc
+  quick-connect execution from the GUI
+* it captures output in the launcher instead of opening an embedded terminal
+  surface
 
 == Related Docs
 

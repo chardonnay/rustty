@@ -9,6 +9,10 @@
   quick-connect draft, tool catalog, and launcher-side diagnostics instead of
   printing a placeholder banner.
   xref:../changelogs/rustty.adoc#rustty-gui-launcher[Changelog entry]
+* `rustty` can now run non-interactive SSH commands for saved SSH sessions
+  from inside the launcher, including GUI-side host-key confirmation and
+  captured stdout/stderr reporting.
+  xref:../changelogs/rustty.adoc#rustty-gui-command-runner[Changelog entry]
 * `rustty` can now print a sample RusTTY configuration for schema review.
   xref:../changelogs/rustty.adoc#rustty-sample-config[Changelog entry]
 * `rustty` can now show the default config path, initialize a sample config

@@ -2,6 +2,18 @@
 
 == Unreleased
 
+[#rustty-gui-command-runner]
+=== Launcher-side SSH command runner
+
+* Added a launcher-side SSH command runner for saved SSH sessions directly
+  inside the `rustty` window.
+* Added GUI-side host-key probing and confirmation so unknown SSH server keys
+  can be trusted once, trusted and saved, or rejected before command
+  execution.
+* Added captured stdout, stderr, exit-status, and host-key trust reporting in
+  the launcher so operators can review non-interactive command runs without
+  dropping back to the shell.
+
 [#rustty-gui-launcher]
 === Native GUI launcher
 

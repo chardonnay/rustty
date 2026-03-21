@@ -16,3 +16,4 @@ workspace = true
 eframe.workspace = true
 rustty-config.workspace = true
 rustty-core.workspace = true
+rustty-transport.workspace = true

@@ -13,4 +13,9 @@ publish = false
 workspace = true
 
 [dependencies]
+rustty-config.workspace = true
 rustty-core.workspace = true
+russh.workspace = true
+ssh-key.workspace = true
+tokio.workspace = true
+tokio-stream = { version = "0.1.17", features = ["net"] }

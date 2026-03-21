@@ -17,6 +17,8 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 * session-backed SSH invocation planning
 * direct-target SSH invocation planning
 * OpenSSH private-key authentication with optional passphrase indirection
+* SSH-agent authentication through either `SSH_AUTH_SOCK` or an explicit
+  agent socket path
 * keyboard-interactive authentication with environment-driven prompt responses
 * password-authenticated SSH exec transport for remote commands
 * local TCP port forwarding through SSH `direct-tcpip`
@@ -29,9 +31,10 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 
 == Planned Capability Profile
 
-* SSH command execution
-* richer session and authentication settings
+* PuTTY `PPK` loading and conversion
+* richer host-key prompts and compatibility flows
 * compatibility-oriented import of legacy PuTTY sessions
+* SSH agent forwarding and non-Unix agent integrations
 
 == Usage Model
 
@@ -56,11 +59,11 @@ The bootstrap CLI is already scriptable and explicit:
   with a requested remote PTY.
 
 Live transport already supports both remote command execution and interactive
-shells. Public keys, keyboard-interactive responses, and passwords are read
-through explicit CLI or session configuration, and host keys are resolved
-through RusTTY's explicit known-hosts flow. Local TCP, remote TCP, and dynamic
-SOCKS listeners stay active for the lifetime of the SSH session and share the
-same authenticated connection.
+shells. Public keys, SSH-agent identities, keyboard-interactive responses, and
+passwords are read through explicit CLI or session configuration, and host
+keys are resolved through RusTTY's explicit known-hosts flow. Local TCP,
+remote TCP, and dynamic SOCKS listeners stay active for the lifetime of the
+SSH session and share the same authenticated connection.
 
 == Configuration and Storage
 
@@ -94,24 +97,31 @@ default location or an explicit `--known-hosts PATH`.
 
 == Authentication and Host Keys
 
-The bootstrap transport currently supports three SSH auth modes:
+The bootstrap transport currently supports four SSH auth modes:
 
 * OpenSSH private-key authentication through `--private-key PATH`
+* SSH-agent authentication through `--agent` or `--agent-socket PATH`
 * keyboard-interactive authentication through `--keyboard-interactive-env ENV`
 * password authentication through `--password-env ENV`
 
 If multiple auth sources are configured, `rusplink` tries public-key auth
-first, then keyboard-interactive, then password authentication.
+first, then SSH-agent auth, then keyboard-interactive, then password
+authentication.
 
 * `--private-key PATH` selects the OpenSSH private key to load.
 * `--key-passphrase-env ENV` selects the environment variable that contains
   the private-key passphrase when the selected key is encrypted.
+* `--agent` enables SSH-agent authentication through the current
+  `SSH_AUTH_SOCK` environment variable.
+* `--agent-socket PATH` enables SSH-agent authentication and forces the socket
+  path used for identity lookup and signing requests.
 * `--keyboard-interactive-env ENV` selects the environment variable that
   contains newline-separated responses for server prompts.
 * `--password-env ENV` selects the environment variable that contains the SSH
   password.
 * Without `--password-env`, `rusplink` reads `RUSTTY_SSH_PASSWORD` only when
-  no private key or keyboard-interactive response source is configured.
+  no private key, agent, or keyboard-interactive response source is
+  configured.
 * `--username USER` overrides the username for session-backed connections.
 * Direct targets can also supply the username through `user@host`.
 * Saved sessions can provide default `username`, `private_key_path`,
@@ -140,6 +150,10 @@ known-hosts file:
 The current bootstrap lookup intentionally matches exact host and `host:port`
 entries that RusTTY writes itself. Wildcards, negations, markers, and hashed
 hostnames are preserved on disk but are not used as trust matches yet.
+
+On Unix-like hosts, `rusplink` can authenticate against a running `rusagent`
+process or any compatible `SSH_AUTH_SOCK` endpoint. Windows-style Pageant IPC
+and SSH agent forwarding are still outside the current bootstrap slice.
 
 == Port Forwarding
 
@@ -175,13 +189,13 @@ SOCKS listeners in one place.
 The current bootstrap output is line-oriented and script-friendly. Dry-run
 plans expose origin, config path, known-hosts path, host, port, command,
 ordered authentication methods, private-key path, key-passphrase source,
-keyboard-interactive response source, password source, host-key policy,
-transport host-key mode, storage origin, and forwarding metadata. Session
-listings now also expose stored usernames, private-key paths, key-passphrase
-environment variable names, keyboard-interactive environment variable names,
-password environment variable names, plus local-forward, remote-forward, and
-dynamic-forward counts so operators can review reusable auth defaults without
-opening the TOML file manually.
+agent socket path, keyboard-interactive response source, password source,
+host-key policy, transport host-key mode, storage origin, and forwarding
+metadata. Session listings now also expose stored usernames, private-key
+paths, key-passphrase environment variable names, keyboard-interactive
+environment variable names, password environment variable names, plus
+local-forward, remote-forward, and dynamic-forward counts so operators can
+review reusable auth defaults without opening the TOML file manually.
 
 == Compatibility Notes
 
@@ -238,6 +252,16 @@ RUSTTY_SSH_PASSWORD=secret rusplink --session production --username ops --unsafe
 [source,text]
 ----
 rusplink ops@example.com --private-key ~/.ssh/id_ed25519 --dry-run
+----
+
+[source,text]
+----
+rusplink ops@example.com --agent --dry-run
+----
+
+[source,text]
+----
+rusplink ops@example.com --agent-socket /tmp/rustty-agent.sock --dry-run
 ----
 
 [source,text]

@@ -69,6 +69,15 @@ pub fn default_known_hosts_path() -> Result<PathBuf, ConfigError> {
     )
 }
 
+/// Returns the default RusTTY SSH-agent socket path for the current host.
+pub fn default_agent_socket_path() -> Result<PathBuf, ConfigError> {
+    default_path_for(
+        platform_for_host(),
+        &ConfigEnvironment::host(),
+        "agent.sock",
+    )
+}
+
 fn platform_for_host() -> Platform {
     if cfg!(target_os = "windows") {
         Platform::Windows
@@ -187,6 +196,18 @@ mod tests {
         assert_eq!(
             path,
             PathBuf::from("/home/daniel/.config/rustty/known_hosts")
+        );
+    }
+
+    #[test]
+    fn unix_agent_socket_path_shares_same_base_directory() {
+        let environment =
+            ConfigEnvironment::from_os_strings(Some("/home/daniel".into()), None, None);
+        let path = default_path_for(Platform::Unix, &environment, "agent.sock")
+            .expect("agent socket path should resolve");
+        assert_eq!(
+            path,
+            PathBuf::from("/home/daniel/.config/rustty/agent.sock")
         );
     }
 }

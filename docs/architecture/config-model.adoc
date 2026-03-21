@@ -58,10 +58,11 @@ session definition.
 For SSH-family tools, RusTTY resolves auth preferences in this order:
 
 * CLI overrides such as `--username`, `--private-key`, `--key-passphrase-env`,
-  `--keyboard-interactive-env`, and `--password-env`
+  `--agent`, `--agent-socket`, `--keyboard-interactive-env`, and
+  `--password-env`
 * saved session defaults from the RusTTY config
 * `RUSTTY_SSH_PASSWORD` as the implicit password source only when no private
-  key or keyboard-interactive response source is configured
+  key, agent, or keyboard-interactive response source is configured
 
 This keeps public-key-only and keyboard-interactive-only sessions from
 requiring an unnecessary password environment variable while still preserving
@@ -130,9 +131,10 @@ config schema and on-disk validation path.
 
 The same config schema can now also be consumed by `rusplink` for session
 listing, SSH dry-run planning, and live bootstrap transport with either
-password, keyboard-interactive, or public-key authentication. Saved local
-port-forwards, remote port-forwards, and dynamic-forward listeners are now
-also loaded into `rusplink` execution plans and live SSH sessions.
+password, keyboard-interactive, SSH-agent, or public-key authentication.
+Saved local port-forwards, remote port-forwards, and dynamic-forward
+listeners are now also loaded into `rusplink` execution plans and live SSH
+sessions.
 
 == Known-Hosts Path Policy
 
@@ -147,3 +149,19 @@ directory as `config.toml`:
 The current bootstrap persistence intentionally appends new exact host or
 `[host]:port` entries and preserves unrelated lines already present in the
 file.
+
+== Agent-Socket Path Policy
+
+RusTTY resolves the default SSH-agent socket in the same platform-specific
+base directory as `config.toml` and `known_hosts`:
+
+* Windows: `%APPDATA%/RusTTY/agent.sock`
+* macOS: `~/Library/Application Support/RusTTY/agent.sock`
+* Unix-like systems: `$XDG_CONFIG_HOME/rustty/agent.sock` when available,
+  otherwise `~/.config/rustty/agent.sock`
+
+The bootstrap `rusagent` service currently uses that path only on Unix-like
+hosts because the current slice relies on Unix-domain sockets. `rusplink`
+connects through `SSH_AUTH_SOCK` by default or through an explicit
+`--agent-socket PATH` override, so RusTTY-managed agent sockets should be
+exported through `SSH_AUTH_SOCK` unless the caller passes the explicit path.

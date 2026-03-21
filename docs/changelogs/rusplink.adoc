@@ -2,6 +2,17 @@
 
 == Unreleased
 
+[#rusplink-agent-auth]
+=== SSH-agent authentication
+
+* Added `--agent` and `--agent-socket PATH` so `rusplink` can authenticate
+  through a running SSH agent instead of loading a private key directly.
+* Extended ordered auth resolution so `rusplink` now prefers public-key auth,
+  then SSH-agent auth, then keyboard-interactive auth, then password
+  authentication.
+* Extended dry-run output so the effective agent socket path is visible to
+  operators and CI scripts.
+
 [#rusplink-keyboard-interactive-auth]
 === Keyboard-interactive authentication
 

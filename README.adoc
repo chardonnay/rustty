@@ -80,10 +80,13 @@ The workspace currently provides:
 * a Rust workspace with shared core, transport, and UI crates,
 * a config bootstrap flow in `rustty`, including sample session auth defaults,
 * a session-aware `rusplink` CLI with dry-run planning, bootstrap SSH exec
-  transport, public-key, keyboard-interactive, and password authentication,
-  local TCP forwarding, remote TCP forwarding, dynamic SOCKS forwarding,
-  known-host persistence, and interactive shell support,
-* placeholder binaries for the remaining planned tools,
+  transport, public-key, SSH-agent, keyboard-interactive, and password
+  authentication, local TCP forwarding, remote TCP forwarding, dynamic SOCKS
+  forwarding, known-host persistence, and interactive shell support,
+* a Unix-oriented `rusagent` bootstrap CLI that can serve an SSH-agent socket,
+  preload OpenSSH identities, add identities to a running agent, and list
+  agent-exposed public keys,
+* placeholder binaries for `ruscp`, `rusftp`, and `rusttygen`,
 * an `xtask` utility that verifies documentation and release-note link
   integrity, and
 * complete AsciiDoc manuals, migration notes, changelogs, and release-note
@@ -107,10 +110,15 @@ cargo run -p rusplink -- --session example-ssh --dry-run -- hostname
 cargo run -p rusplink -- example.com --known-hosts /tmp/rustty-known_hosts --dry-run -- uptime
 RUSTTY_SSH_PASSWORD=secret cargo run -p rusplink -- ops@example.com --unsafe-accept-host-key -- uptime
 cargo run -p rusplink -- ops@example.com --private-key ~/.ssh/id_ed25519 --dry-run
+cargo run -p rusplink -- ops@example.com --agent --dry-run
+cargo run -p rusplink -- ops@example.com --agent-socket /tmp/rustty-agent.sock --dry-run
 cargo run -p rusplink -- ops@example.com --keyboard-interactive-env RUSTTY_KI_RESPONSES --dry-run
 cargo run -p rusplink -- ops@example.com --local-forward 15432=db.internal:5432 --dry-run
 cargo run -p rusplink -- ops@example.com --remote-forward 15432=127.0.0.1:5432 --dry-run
 cargo run -p rusplink -- ops@example.com --dynamic-forward 1080 --dry-run
+cargo run -p rusagent -- --show-default-socket-path
+cargo run -p rusagent -- --serve --identity ~/.ssh/id_ed25519
+cargo run -p rusagent -- --list
 ----
 
 == Licensing

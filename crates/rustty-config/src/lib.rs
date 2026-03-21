@@ -13,5 +13,5 @@ pub use known_hosts::{
 pub use model::{
     AppConfig, CURRENT_SCHEMA_VERSION, ImportSource, SessionStore, StoredSession, ToolProfile,
 };
-pub use paths::{default_config_path, default_known_hosts_path};
+pub use paths::{default_agent_socket_path, default_config_path, default_known_hosts_path};
 pub use store::{InitResult, init_config, load_config, save_config};

@@ -9,9 +9,11 @@ use std::{
 };
 
 use crossterm::terminal;
+#[cfg(unix)]
+use russh::keys::agent::client::AgentClient;
 use russh::keys::{PrivateKeyWithHashAlg, load_secret_key};
 use russh::{ChannelMsg, Disconnect, client, client::KeyboardInteractiveAuthResponse};
-use ssh_key::{HashAlg, PublicKey};
+use ssh_key::{Algorithm, HashAlg, PublicKey};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -83,6 +85,11 @@ pub enum SshAuthentication {
     KeyboardInteractive {
         /// Ordered responses supplied to server prompts.
         responses: Vec<String>,
+    },
+    /// Authentication via an SSH agent socket.
+    Agent {
+        /// Explicit agent socket path or `None` to use `SSH_AUTH_SOCK`.
+        socket_path: Option<PathBuf>,
     },
 }
 
@@ -265,6 +272,29 @@ pub enum TransportError {
         /// Underlying key-loading error.
         source: russh::keys::Error,
     },
+    /// Connecting to the configured SSH agent failed.
+    AgentConnect {
+        /// Explicit agent socket path, if one was configured.
+        socket_path: Option<PathBuf>,
+        /// Underlying agent connection error.
+        source: russh::keys::Error,
+    },
+    /// Loading identities from the configured SSH agent failed.
+    AgentIdentities {
+        /// Explicit agent socket path, if one was configured.
+        socket_path: Option<PathBuf>,
+        /// Underlying agent query error.
+        source: russh::keys::Error,
+    },
+    /// SSH agent authentication failed while signing or answering the server.
+    AgentAuthentication {
+        /// Explicit agent socket path, if one was configured.
+        socket_path: Option<PathBuf>,
+        /// Underlying authentication error.
+        source: russh::AgentAuthError,
+    },
+    /// SSH-agent authentication is not supported on the current platform.
+    AgentUnsupportedPlatform,
     /// The configured keyboard-interactive response list ended before the server prompts did.
     MissingKeyboardInteractiveResponses {
         /// Number of prompts requested by the server in the current round.
@@ -330,6 +360,36 @@ impl fmt::Display for TransportError {
                     path.display()
                 )
             }
+            Self::AgentConnect {
+                socket_path,
+                source,
+            } => write!(
+                formatter,
+                "failed to connect to SSH agent {}: {source}",
+                render_agent_socket_path(socket_path.as_ref())
+            ),
+            Self::AgentIdentities {
+                socket_path,
+                source,
+            } => write!(
+                formatter,
+                "failed to read identities from SSH agent {}: {source}",
+                render_agent_socket_path(socket_path.as_ref())
+            ),
+            Self::AgentAuthentication {
+                socket_path,
+                source,
+            } => write!(
+                formatter,
+                "SSH agent authentication failed via {}: {source}",
+                render_agent_socket_path(socket_path.as_ref())
+            ),
+            Self::AgentUnsupportedPlatform => {
+                write!(
+                    formatter,
+                    "SSH-agent authentication is not supported on this platform yet"
+                )
+            }
             Self::MissingKeyboardInteractiveResponses {
                 requested_prompts,
                 available_responses,
@@ -374,10 +434,15 @@ impl std::error::Error for TransportError {
             Self::RemoteForwardRequest { source, .. } => Some(source),
             Self::Russh(source) => Some(source),
             Self::PrivateKeyLoad { source, .. } => Some(source),
+            Self::AgentConnect { source, .. } | Self::AgentIdentities { source, .. } => {
+                Some(source)
+            }
+            Self::AgentAuthentication { source, .. } => Some(source),
             Self::MissingCommand
             | Self::RemoteForwardAssignedPort { .. }
             | Self::AuthenticationRejected
             | Self::MissingAuthentication
+            | Self::AgentUnsupportedPlatform
             | Self::MissingKeyboardInteractiveResponses { .. }
             | Self::MissingExitStatus
             | Self::MissingVerifiedHostKey
@@ -727,6 +792,12 @@ async fn authenticate_session(
                 }
                 continue;
             }
+            SshAuthentication::Agent { socket_path } => {
+                if authenticate_agent(session, username, socket_path.as_ref()).await? {
+                    return Ok(());
+                }
+                continue;
+            }
         };
 
         if auth_result.success() {
@@ -735,6 +806,89 @@ async fn authenticate_session(
     }
 
     Err(TransportError::AuthenticationRejected)
+}
+
+#[cfg(unix)]
+async fn authenticate_agent(
+    session: &mut client::Handle<ClientHandler>,
+    username: &str,
+    socket_path: Option<&PathBuf>,
+) -> Result<bool, TransportError> {
+    let mut agent = connect_agent_client(socket_path).await?;
+    let identities =
+        agent
+            .request_identities()
+            .await
+            .map_err(|source| TransportError::AgentIdentities {
+                socket_path: socket_path.cloned(),
+                source,
+            })?;
+
+    if identities.is_empty() {
+        return Ok(false);
+    }
+
+    let rsa_hash = session
+        .best_supported_rsa_hash()
+        .await
+        .map_err(TransportError::Russh)?
+        .flatten();
+
+    for identity in identities {
+        let hash_alg = match identity.algorithm() {
+            Algorithm::Rsa { .. } => rsa_hash,
+            _ => None,
+        };
+        let auth_result = session
+            .authenticate_publickey_with(username.to_owned(), identity, hash_alg, &mut agent)
+            .await
+            .map_err(|source| TransportError::AgentAuthentication {
+                socket_path: socket_path.cloned(),
+                source,
+            })?;
+        if auth_result.success() {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(not(unix))]
+async fn authenticate_agent(
+    _session: &mut client::Handle<ClientHandler>,
+    _username: &str,
+    _socket_path: Option<&PathBuf>,
+) -> Result<bool, TransportError> {
+    Err(TransportError::AgentUnsupportedPlatform)
+}
+
+#[cfg(unix)]
+async fn connect_agent_client(
+    socket_path: Option<&PathBuf>,
+) -> Result<AgentClient<tokio::net::UnixStream>, TransportError> {
+    match socket_path {
+        Some(path) => {
+            AgentClient::connect_uds(path)
+                .await
+                .map_err(|source| TransportError::AgentConnect {
+                    socket_path: Some(path.clone()),
+                    source,
+                })
+        }
+        None => AgentClient::connect_env()
+            .await
+            .map_err(|source| TransportError::AgentConnect {
+                socket_path: None,
+                source,
+            }),
+    }
+}
+
+fn render_agent_socket_path(socket_path: Option<&PathBuf>) -> String {
+    socket_path
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "SSH_AUTH_SOCK".to_owned())
 }
 
 async fn authenticate_keyboard_interactive(
@@ -1599,6 +1753,7 @@ mod tests {
             SshAuthentication::KeyboardInteractive { .. } => {
                 panic!("expected public-key auth")
             }
+            SshAuthentication::Agent { .. } => panic!("expected public-key auth"),
         }
     }
 
@@ -1612,8 +1767,28 @@ mod tests {
             SshAuthentication::KeyboardInteractive { responses } => {
                 assert_eq!(responses, vec!["123456", "ops"]);
             }
-            SshAuthentication::Password { .. } | SshAuthentication::PublicKey { .. } => {
+            SshAuthentication::Password { .. }
+            | SshAuthentication::PublicKey { .. }
+            | SshAuthentication::Agent { .. } => {
                 panic!("expected keyboard-interactive auth")
+            }
+        }
+    }
+
+    #[test]
+    fn agent_auth_configuration_is_stable_data() {
+        let authentication = SshAuthentication::Agent {
+            socket_path: Some(PathBuf::from("/tmp/rusagent.sock")),
+        };
+
+        match authentication {
+            SshAuthentication::Agent { socket_path } => {
+                assert_eq!(socket_path, Some(PathBuf::from("/tmp/rusagent.sock")));
+            }
+            SshAuthentication::Password { .. }
+            | SshAuthentication::PublicKey { .. }
+            | SshAuthentication::KeyboardInteractive { .. } => {
+                panic!("expected agent auth")
             }
         }
     }

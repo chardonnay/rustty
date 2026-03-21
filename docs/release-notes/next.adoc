@@ -25,6 +25,9 @@
 * RusTTY sessions can now also carry reusable SSH `keyboard_interactive_env`
   defaults for scripted keyboard-interactive login flows.
   xref:../../CHANGELOG.adoc#suite-rusplink-keyboard-interactive-auth[Changelog entry]
+* RusTTY now resolves a default SSH-agent socket path alongside
+  `config.toml` and `known_hosts`.
+  xref:../../CHANGELOG.adoc#suite-rusagent-agent-auth[Changelog entry]
 * RusTTY sessions can now also carry validated saved local port-forward
   definitions for `rusplink`.
   xref:../../CHANGELOG.adoc#suite-rusplink-local-forwarding[Changelog entry]
@@ -56,6 +59,9 @@
   keyboard-interactive responses and include that auth source in its ordered
   fallback chain.
   xref:../changelogs/rusplink.adoc#rusplink-keyboard-interactive-auth[Changelog entry]
+* `rusplink` can now authenticate through a running SSH agent via
+  `--agent` or `--agent-socket PATH`.
+  xref:../changelogs/rusplink.adoc#rusplink-agent-auth[Changelog entry]
 * `rusplink` can now open local TCP forwarding listeners from either
   `--local-forward` flags or saved RusTTY session rules.
   xref:../changelogs/rusplink.adoc#rusplink-local-forwarding[Changelog entry]
@@ -72,6 +78,12 @@
 * `ask` host-key policy remains conservative for unknown hosts and still does
   not offer an interactive trust prompt.
   xref:../changelogs/rusplink.adoc#rusplink-known-hosts-shell[Changelog entry]
+
+=== rusagent
+
+* `rusagent` can now serve a Unix-domain SSH-agent socket, preload OpenSSH
+  identities, add identities to a running agent, and list loaded public keys.
+  xref:../changelogs/rusagent.adoc#rusagent-socket-service[Changelog entry]
 
 === Developer workflow
 

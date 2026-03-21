@@ -33,7 +33,7 @@ branches can continue to work through the same queue without losing context.
 [#roadmap-rusplink-advanced-auth]
 === 3. rusplink advanced SSH auth and compatibility (`in_progress`)
 
-* SSH agent authentication through `rusagent`
+* SSH agent authentication through `rusagent` (`done`)
 * PuTTY PPK loading and conversion
 * keyboard-interactive auth (`done`)
 * stricter host-key UI and compatibility prompts
@@ -68,11 +68,12 @@ branches can continue to work through the same queue without losing context.
 * resume, directory traversal, and batch-mode behavior
 
 [#roadmap-rusagent]
-=== 8. rusagent SSH agent (`later`)
+=== 8. rusagent SSH agent (`in_progress`)
 
-* background agent service
-* signing requests for SSH clients
+* foreground Unix-domain socket service (`done`)
+* signing requests for SSH clients (`done`)
 * platform-specific socket or IPC integration
+* desktop/background lifecycle integration
 
 [#roadmap-rusttygen]
 === 9. rusttygen key management (`later`)

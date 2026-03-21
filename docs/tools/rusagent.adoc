@@ -1,7 +1,7 @@
 = rusagent Manual
 :toc:
 
-`rusagent` is the planned SSH agent component for RusTTY. It replaces PuTTY's
+`rusagent` is the SSH agent component for RusTTY. It replaces PuTTY's
 `pageant`.
 
 == Purpose
@@ -9,49 +9,109 @@
 `rusagent` is intended to hold private keys securely, answer signing requests,
 and provide a stable authentication bridge for the other RusTTY tools.
 
+== Bootstrap Capability Profile
+
+* default agent-socket path discovery
+* foreground SSH-agent service on a Unix-domain socket
+* preloading one or more OpenSSH private keys during startup
+* adding identities to a running agent socket
+* listing agent-exposed public keys and SHA-256 fingerprints
+* optional passphrase indirection through environment variables
+* optional SSH-agent key lifetime constraints
+
 == Planned Capability Profile
 
-* agent startup and lifecycle management
-* key loading and unloading
-* integration with RusTTY-native and imported key formats
-* future platform-specific socket and IPC handling
+* RusTTY-native and PuTTY `PPK` key loading
+* Windows and macOS platform-specific background service integration
+* richer lifecycle controls such as unloading identities or daemon management
+* tighter integration with future `rusttygen`
 
 == Usage Model
 
-The bootstrap binary currently prints a placeholder message. The future tool
-should support both foreground diagnostics and platform-appropriate background
-operation.
+The bootstrap CLI is already functional and foreground-oriented:
+
+* `--show-default-socket-path` prints RusTTY's default SSH-agent socket path.
+* `--serve` starts an SSH-agent service and keeps running until interrupted.
+* `--identity PATH` preloads one or more OpenSSH private keys when combined
+  with `--serve`.
+* `--list` queries a running agent socket and prints the currently exposed
+  public keys.
+* `--add-identity PATH` loads an OpenSSH private key into an already running
+  agent socket.
+* `--socket PATH` overrides the socket location for `--list`,
+  `--add-identity`, or `--serve`.
+* `--passphrase-env ENV` resolves an encrypted key's passphrase at load time.
+* `--lifetime SECONDS` applies an SSH-agent lifetime constraint to loaded
+  keys.
+
+The current bootstrap service runs in the foreground, which makes it easy to
+observe diagnostics while RusTTY finishes the broader desktop integration
+work.
 
 == Configuration and Storage
 
-Key metadata should remain consistent across `rusagent` and `rusttygen`.
-Imported PuTTY keys must retain attribution and migration clarity.
+The default RusTTY agent socket path shares the same platform-specific base
+directory as `config.toml` and `known_hosts`:
+
+* Windows: `%APPDATA%/RusTTY/agent.sock`
+* macOS: `~/Library/Application Support/RusTTY/agent.sock`
+* Unix-like systems: `$XDG_CONFIG_HOME/rustty/agent.sock` when available,
+  otherwise `~/.config/rustty/agent.sock`
+
+In the current bootstrap slice, the agent service itself is only available on
+Unix-like systems because it relies on Unix-domain sockets. Loaded keys are
+kept in the running agent process rather than in the RusTTY config file.
+Passphrases are read from environment variables at load time and are not
+persisted back into RusTTY-managed storage.
 
 == Logging and Diagnostics
 
-The agent should emit safe diagnostics for load failures, passphrase problems,
-socket binding issues, and client compatibility mismatches.
+`rusagent` emits line-oriented error messages for:
+
+* socket bind or connection failures
+* passphrase lookup failures for encrypted OpenSSH keys
+* malformed or unsupported key files
+* agent query failures while listing identities
+* platform mismatches when Unix-domain sockets are unavailable
 
 == Compatibility Notes
 
-RusTTY may diverge from `pageant` in transport details or UI surface, but any
-observable change must be documented for operators.
+RusTTY currently uses Unix-domain sockets and SSH-agent semantics rather than
+Pageant's Windows-native IPC model. This means `rusagent` already works well
+with the bootstrap `rusplink` SSH-agent flow on Unix-like hosts, but it does
+not yet offer Windows Pageant protocol compatibility, agent forwarding, or a
+desktop tray/UI surface.
 
 == Examples
 
 [source,text]
 ----
-rusagent
+rusagent --show-default-socket-path
 ----
 
 [source,text]
 ----
-rusagent --list
+rusagent --serve --identity ~/.ssh/id_ed25519
+----
+
+[source,text]
+----
+rusagent --list --socket /tmp/rustty-agent.sock
+----
+
+[source,text]
+----
+rusagent --add-identity ~/.ssh/id_ed25519 --socket /tmp/rustty-agent.sock
 ----
 
 == Current Limits
 
-The bootstrap implementation does not yet manage real keys or sockets.
+* The current bootstrap service only supports Unix-domain sockets.
+* `rusagent` currently loads OpenSSH private keys, not PuTTY `PPK` files.
+* The service runs in the foreground and does not yet install a long-lived
+  desktop/background agent.
+* Identity removal, agent forwarding, and platform-specific IPC bridges are
+  still future work.
 
 == Related Docs
 

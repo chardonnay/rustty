@@ -62,6 +62,18 @@ This file tracks suite-level milestones. Tool-specific details live under
   keyboard-interactive defaults and auth ordering are visible in
   script-friendly output.
 
+[#suite-rusagent-agent-auth]
+=== rusagent and SSH-agent authentication
+
+* Added RusTTY default-path resolution for an SSH-agent socket alongside
+  `config.toml` and `known_hosts`.
+* Added a bootstrap `rusagent` CLI that can serve a Unix-domain agent socket,
+  preload OpenSSH identities, add identities to a running agent, and list
+  exposed public keys.
+* Added `rusplink` support for ordered SSH-agent authentication via
+  `--agent` or `--agent-socket`, between direct key auth and
+  keyboard-interactive fallback.
+
 [#suite-rusplink-local-forwarding]
 === rusplink local port forwarding
 

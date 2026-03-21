@@ -2,6 +2,16 @@
 
 == Unreleased
 
+[#rusagent-socket-service]
+=== Socket service and identity loading
+
+* Added `--show-default-socket-path`, `--serve`, `--list`, and
+  `--add-identity` so `rusagent` can act as a real SSH-agent bootstrap tool.
+* Added OpenSSH private-key loading with optional passphrase indirection and
+  optional SSH-agent lifetime constraints.
+* Added Unix-domain socket serving and identity queries so bootstrap
+  `rusplink` sessions can authenticate through a shared agent process.
+
 [#rusagent-bootstrap-repo]
 === Bootstrap repository
 

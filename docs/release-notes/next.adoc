@@ -22,6 +22,9 @@
 * RusTTY sessions can now also store reusable SSH `private_key_path` and
   `key_passphrase_env` defaults for public-key login flows.
   xref:../../CHANGELOG.adoc#suite-rusplink-public-key-auth[Changelog entry]
+* RusTTY sessions can now also carry reusable SSH `keyboard_interactive_env`
+  defaults for scripted keyboard-interactive login flows.
+  xref:../../CHANGELOG.adoc#suite-rusplink-keyboard-interactive-auth[Changelog entry]
 * RusTTY sessions can now also carry validated saved local port-forward
   definitions for `rusplink`.
   xref:../../CHANGELOG.adoc#suite-rusplink-local-forwarding[Changelog entry]
@@ -49,6 +52,10 @@
 * `rusplink` can now authenticate with OpenSSH private keys, optional
   passphrase indirection, and password fallback ordering.
   xref:../changelogs/rusplink.adoc#rusplink-public-key-auth[Changelog entry]
+* `rusplink` can now authenticate with environment-driven SSH
+  keyboard-interactive responses and include that auth source in its ordered
+  fallback chain.
+  xref:../changelogs/rusplink.adoc#rusplink-keyboard-interactive-auth[Changelog entry]
 * `rusplink` can now open local TCP forwarding listeners from either
   `--local-forward` flags or saved RusTTY session rules.
   xref:../changelogs/rusplink.adoc#rusplink-local-forwarding[Changelog entry]

@@ -96,6 +96,8 @@ pub enum ValidationError {
     EmptySessionPrivateKeyPath(String),
     /// A stored session key-passphrase environment variable name is empty.
     EmptySessionKeyPassphraseEnv(String),
+    /// A stored session keyboard-interactive environment variable name is empty.
+    EmptySessionKeyboardInteractiveEnv(String),
     /// A session declares a key-passphrase environment variable without a key path.
     DanglingSessionKeyPassphraseEnv(String),
     /// A stored session local port-forward source is empty.
@@ -149,6 +151,12 @@ impl fmt::Display for ValidationError {
                 write!(
                     formatter,
                     "RusTTY session '{session_name}' must not use an empty key_passphrase_env"
+                )
+            }
+            Self::EmptySessionKeyboardInteractiveEnv(session_name) => {
+                write!(
+                    formatter,
+                    "RusTTY session '{session_name}' must not use an empty keyboard_interactive_env"
                 )
             }
             Self::DanglingSessionKeyPassphraseEnv(session_name) => {

@@ -28,11 +28,11 @@ Usage:
   rusplink --show-default-known-hosts-path
   rusplink --list-sessions [--config PATH]
   rusplink --list-sessions --config=PATH
-  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session=NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
-  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
-  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--keyboard-interactive-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session=NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--keyboard-interactive-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink --session NAME [--config PATH] [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--keyboard-interactive-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--keyboard-interactive-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] --dry-run [-- COMMAND...]
+  rusplink TARGET [--known-hosts PATH] [--username USER] [--private-key PATH] [--key-passphrase-env ENV] [--keyboard-interactive-env ENV] [--password-env ENV] [--local-forward SPEC]... [--remote-forward SPEC]... [--dynamic-forward SPEC]... [--unsafe-accept-host-key] [--port PORT] [-- COMMAND...]
 
 Notes:
   TARGET supports host, user@host, host:port, and [ipv6-host]:port forms.
@@ -42,9 +42,12 @@ Notes:
   15432=127.0.0.1:5432 or 127.0.0.1:18080=127.0.0.1:80.
   --dynamic-forward SPEC uses [HOST:]PORT, for example:
   1080 or 127.0.0.1:1080.
-  Live SSH execution supports OpenSSH private keys and password authentication.
-  If both are configured, rusplink tries public-key auth first and falls back
-  to password authentication only if the server rejects the key.
+  Live SSH execution supports OpenSSH private keys, keyboard-interactive
+  responses, and password authentication.
+  If multiple auth sources are configured, rusplink tries public-key auth
+  first, then keyboard-interactive, then password authentication.
+  Keyboard-interactive responses are read from an environment variable with one
+  response per line.
   Host keys are verified against the RusTTY known-hosts file. `accept_new`
   sessions persist the first trusted server key automatically; `ask` still
   needs a pre-trusted key because interactive confirmation is not implemented.
@@ -71,6 +74,7 @@ struct PlanRequest {
     username_override: Option<String>,
     private_key_path_override: Option<PathBuf>,
     key_passphrase_env_override: Option<String>,
+    keyboard_interactive_env_override: Option<String>,
     password_env_override: Option<String>,
     local_forward_overrides: Vec<PortForwardSpec>,
     remote_forward_overrides: Vec<RemoteForwardSpec>,
@@ -110,6 +114,7 @@ struct ConnectionPlan {
     imported_from: Option<ImportSource>,
     private_key_path: Option<PathBuf>,
     key_passphrase_env: Option<String>,
+    keyboard_interactive_env_var: Option<String>,
     password_env_var: Option<String>,
     unsafe_accept_host_key: bool,
 }
@@ -202,6 +207,7 @@ where
     let mut username_override = None;
     let mut private_key_path_override = None;
     let mut key_passphrase_env_override = None;
+    let mut keyboard_interactive_env_override = None;
     let mut password_env_override = None;
     let mut local_forward_overrides = Vec::new();
     let mut remote_forward_overrides = Vec::new();
@@ -302,6 +308,17 @@ where
                 )?;
                 index += 1;
             }
+            "--keyboard-interactive-env" => {
+                let raw_env = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| usage_error("missing value for --keyboard-interactive-env"))?;
+                set_option_once(
+                    &mut keyboard_interactive_env_override,
+                    raw_env.clone(),
+                    "duplicate --keyboard-interactive-env flag",
+                )?;
+                index += 1;
+            }
             "--password-env" => {
                 let raw_env = arguments
                     .get(index + 1)
@@ -378,6 +395,12 @@ where
                         raw_env.to_owned(),
                         "duplicate --key-passphrase-env flag",
                     )?;
+                } else if let Some(raw_env) = argument.strip_prefix("--keyboard-interactive-env=") {
+                    set_option_once(
+                        &mut keyboard_interactive_env_override,
+                        raw_env.to_owned(),
+                        "duplicate --keyboard-interactive-env flag",
+                    )?;
                 } else if let Some(raw_env) = argument.strip_prefix("--password-env=") {
                     set_option_once(
                         &mut password_env_override,
@@ -422,6 +445,7 @@ where
             || username_override.is_some()
             || private_key_path_override.is_some()
             || key_passphrase_env_override.is_some()
+            || keyboard_interactive_env_override.is_some()
             || password_env_override.is_some()
             || !local_forward_overrides.is_empty()
             || !remote_forward_overrides.is_empty()
@@ -449,6 +473,7 @@ where
             || username_override.is_some()
             || private_key_path_override.is_some()
             || key_passphrase_env_override.is_some()
+            || keyboard_interactive_env_override.is_some()
             || password_env_override.is_some()
             || !local_forward_overrides.is_empty()
             || !remote_forward_overrides.is_empty()
@@ -472,6 +497,7 @@ where
             || username_override.is_some()
             || private_key_path_override.is_some()
             || key_passphrase_env_override.is_some()
+            || keyboard_interactive_env_override.is_some()
             || password_env_override.is_some()
             || !local_forward_overrides.is_empty()
             || !remote_forward_overrides.is_empty()
@@ -501,6 +527,7 @@ where
             username_override,
             private_key_path_override,
             key_passphrase_env_override,
+            keyboard_interactive_env_override,
             password_env_override,
             local_forward_overrides,
             remote_forward_overrides,
@@ -524,6 +551,7 @@ where
                 username_override,
                 private_key_path_override,
                 key_passphrase_env_override,
+                keyboard_interactive_env_override,
                 password_env_override,
                 local_forward_overrides,
                 remote_forward_overrides,
@@ -560,7 +588,7 @@ where
     writeln!(writer, "config_path={}", config_path.display()).map_err(|error| error.to_string())?;
     writeln!(
         writer,
-        "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tport_forwards\tremote_forwards\tdynamic_forwards\timported_from"
+        "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tkeyboard_interactive_env\tport_forwards\tremote_forwards\tdynamic_forwards\timported_from"
     )
     .map_err(|error| error.to_string())?;
 
@@ -572,13 +600,14 @@ where
         let password_env = session.password_env.as_deref().unwrap_or("-");
         let private_key_path = session.private_key_path.as_deref().unwrap_or("-");
         let key_passphrase_env = session.key_passphrase_env.as_deref().unwrap_or("-");
+        let keyboard_interactive_env = session.keyboard_interactive_env.as_deref().unwrap_or("-");
         let port_forwards = session.port_forwards.len();
         let remote_forwards = session.remote_forwards.len();
         let dynamic_forwards = session.dynamic_forwards.len();
         let imported_from = render_import_source(stored_session.imported_from);
         writeln!(
             writer,
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             session.name,
             session.protocol.label(),
             host,
@@ -587,6 +616,7 @@ where
             password_env,
             private_key_path,
             key_passphrase_env,
+            keyboard_interactive_env,
             port_forwards,
             remote_forwards,
             dynamic_forwards,
@@ -647,16 +677,21 @@ fn build_session_plan(
         .key_passphrase_env_override
         .clone()
         .or_else(|| session.key_passphrase_env.clone());
+    let keyboard_interactive_env_var = request
+        .keyboard_interactive_env_override
+        .clone()
+        .or_else(|| session.keyboard_interactive_env.clone());
     let password_env_var = resolve_password_env_var(
         request.password_env_override.clone(),
         session.password_env.clone(),
-        private_key_path.is_some(),
+        private_key_path.is_some() || keyboard_interactive_env_var.is_some(),
     );
     validate_authentication_preferences(
         "session",
         session.name.as_str(),
         private_key_path.as_ref(),
         key_passphrase_env.as_deref(),
+        keyboard_interactive_env_var.as_deref(),
         password_env_var.as_deref(),
     )?;
     let mut port_forwards = session.port_forwards.clone();
@@ -687,6 +722,7 @@ fn build_session_plan(
         imported_from: stored_session.imported_from,
         private_key_path,
         key_passphrase_env,
+        keyboard_interactive_env_var,
         password_env_var,
         unsafe_accept_host_key: request.unsafe_accept_host_key,
     })
@@ -705,16 +741,18 @@ fn build_direct_plan(
     let private_key_path =
         resolve_private_key_path(request.private_key_path_override.clone(), None)?;
     let key_passphrase_env = request.key_passphrase_env_override.clone();
+    let keyboard_interactive_env_var = request.keyboard_interactive_env_override.clone();
     let password_env_var = resolve_password_env_var(
         request.password_env_override.clone(),
         None,
-        private_key_path.is_some(),
+        private_key_path.is_some() || keyboard_interactive_env_var.is_some(),
     );
     validate_authentication_preferences(
         "direct target",
         target.host.as_str(),
         private_key_path.as_ref(),
         key_passphrase_env.as_deref(),
+        keyboard_interactive_env_var.as_deref(),
         password_env_var.as_deref(),
     )?;
 
@@ -739,6 +777,7 @@ fn build_direct_plan(
         imported_from: None,
         private_key_path,
         key_passphrase_env,
+        keyboard_interactive_env_var,
         password_env_var,
         unsafe_accept_host_key: request.unsafe_accept_host_key,
     })
@@ -866,6 +905,12 @@ where
     .map_err(|error| error.to_string())?;
     writeln!(
         writer,
+        "keyboard_interactive_env={}",
+        plan.keyboard_interactive_env_var.as_deref().unwrap_or("-")
+    )
+    .map_err(|error| error.to_string())?;
+    writeln!(
+        writer,
         "password_env={}",
         plan.password_env_var.as_deref().unwrap_or("-")
     )
@@ -974,6 +1019,12 @@ fn resolve_authentication_methods(plan: &ConnectionPlan) -> Result<Vec<SshAuthen
         });
     }
 
+    if let Some(keyboard_interactive_env_var) = plan.keyboard_interactive_env_var.as_deref() {
+        authentication_methods.push(SshAuthentication::KeyboardInteractive {
+            responses: resolve_keyboard_interactive_responses(keyboard_interactive_env_var)?,
+        });
+    }
+
     if let Some(password_env_var) = plan.password_env_var.as_deref() {
         authentication_methods.push(SshAuthentication::Password {
             password: resolve_secret_env(password_env_var, "SSH password")?,
@@ -982,7 +1033,7 @@ fn resolve_authentication_methods(plan: &ConnectionPlan) -> Result<Vec<SshAuthen
 
     if authentication_methods.is_empty() {
         return Err(
-            "SSH authentication is required; configure --private-key, --password-env, or session defaults"
+            "SSH authentication is required; configure --private-key, --keyboard-interactive-env, --password-env, or session defaults"
                 .to_owned(),
         );
     }
@@ -1172,6 +1223,25 @@ fn resolve_secret_env(env_var: &str, secret_label: &str) -> Result<String, Strin
     }
 
     Ok(value)
+}
+
+fn resolve_keyboard_interactive_responses(env_var: &str) -> Result<Vec<String>, String> {
+    let raw_value = env::var(env_var).map_err(|_| {
+        format!("missing keyboard-interactive responses in environment variable {env_var}")
+    })?;
+
+    Ok(split_keyboard_interactive_responses(&raw_value))
+}
+
+fn split_keyboard_interactive_responses(raw_value: &str) -> Vec<String> {
+    if raw_value.is_empty() {
+        return vec![String::new()];
+    }
+
+    raw_value
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_owned())
+        .collect()
 }
 
 fn resolve_host_key_check(plan: &ConnectionPlan) -> Result<HostKeyCheck, String> {
@@ -1380,6 +1450,9 @@ fn render_authentication_methods(plan: &ConnectionPlan) -> String {
     if plan.private_key_path.is_some() {
         methods.push("public_key");
     }
+    if plan.keyboard_interactive_env_var.is_some() {
+        methods.push("keyboard_interactive");
+    }
     if plan.password_env_var.is_some() {
         methods.push("password");
     }
@@ -1471,10 +1544,10 @@ fn resolve_home_directory() -> Result<PathBuf, String> {
 fn resolve_password_env_var(
     override_env: Option<String>,
     session_env: Option<String>,
-    private_key_configured: bool,
+    non_password_auth_configured: bool,
 ) -> Option<String> {
     override_env.or(session_env).or_else(|| {
-        if private_key_configured {
+        if non_password_auth_configured {
             None
         } else {
             Some(DEFAULT_PASSWORD_ENV.to_owned())
@@ -1487,6 +1560,7 @@ fn validate_authentication_preferences(
     target_label: &str,
     private_key_path: Option<&PathBuf>,
     key_passphrase_env: Option<&str>,
+    keyboard_interactive_env_var: Option<&str>,
     password_env_var: Option<&str>,
 ) -> Result<(), String> {
     if key_passphrase_env.is_some() && private_key_path.is_none() {
@@ -1495,7 +1569,10 @@ fn validate_authentication_preferences(
         ));
     }
 
-    if private_key_path.is_none() && password_env_var.is_none() {
+    if private_key_path.is_none()
+        && keyboard_interactive_env_var.is_none()
+        && password_env_var.is_none()
+    {
         return Err(format!(
             "{origin_label} '{target_label}' does not define any SSH authentication source"
         ));
@@ -1558,6 +1635,7 @@ mod tests {
     use crate::{
         InvocationTarget, normalize_private_key_path, parse_command, render_remote_command,
         resolve_authentication_methods, resolve_host_key_check,
+        split_keyboard_interactive_responses,
     };
 
     #[test]
@@ -1610,6 +1688,7 @@ mod tests {
                 username_override: Some("ops".to_owned()),
                 private_key_path_override: None,
                 key_passphrase_env_override: None,
+                keyboard_interactive_env_override: None,
                 password_env_override: Some("RUSTTY_TEST_PASSWORD".to_owned()),
                 local_forward_overrides: Vec::new(),
                 remote_forward_overrides: Vec::new(),
@@ -1638,6 +1717,7 @@ mod tests {
                 username_override: None,
                 private_key_path_override: Some(PathBuf::from("/tmp/id_ed25519")),
                 key_passphrase_env_override: Some("RUSTTY_TEST_KEY_PASSPHRASE".to_owned()),
+                keyboard_interactive_env_override: None,
                 password_env_override: None,
                 local_forward_overrides: Vec::new(),
                 remote_forward_overrides: Vec::new(),
@@ -1670,6 +1750,7 @@ mod tests {
                 username_override: None,
                 private_key_path_override: None,
                 key_passphrase_env_override: None,
+                keyboard_interactive_env_override: None,
                 password_env_override: None,
                 local_forward_overrides: vec![PortForwardSpec::new(
                     "127.0.0.1:15432",
@@ -1705,6 +1786,7 @@ mod tests {
                 username_override: None,
                 private_key_path_override: None,
                 key_passphrase_env_override: None,
+                keyboard_interactive_env_override: None,
                 password_env_override: None,
                 local_forward_overrides: Vec::new(),
                 remote_forward_overrides: vec![RemoteForwardSpec::new(
@@ -1740,6 +1822,7 @@ mod tests {
                 username_override: None,
                 private_key_path_override: None,
                 key_passphrase_env_override: None,
+                keyboard_interactive_env_override: None,
                 password_env_override: None,
                 local_forward_overrides: Vec::new(),
                 remote_forward_overrides: Vec::new(),
@@ -1778,6 +1861,7 @@ mod tests {
                 username_override: None,
                 private_key_path_override: None,
                 key_passphrase_env_override: None,
+                keyboard_interactive_env_override: None,
                 password_env_override: None,
                 local_forward_overrides: Vec::new(),
                 remote_forward_overrides: Vec::new(),
@@ -1833,11 +1917,11 @@ mod tests {
         assert!(output.contains("config_path="));
         assert!(
             output.contains(
-                "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tport_forwards\tremote_forwards\tdynamic_forwards\timported_from"
+                "name\tprotocol\thost\tport\tusername\tpassword_env\tprivate_key_path\tkey_passphrase_env\tkeyboard_interactive_env\tport_forwards\tremote_forwards\tdynamic_forwards\timported_from"
             )
         );
         assert!(output.contains(
-            "example-ssh\tSSH\texample.com\t22\tops\tRUSTTY_EXAMPLE_SSH_PASSWORD\t-\t-\t0\t0\t0\t-"
+            "example-ssh\tSSH\texample.com\t22\tops\tRUSTTY_EXAMPLE_SSH_PASSWORD\t-\t-\t-\t0\t0\t0\t-"
         ));
         assert!(error_output.is_empty());
     }
@@ -2234,6 +2318,34 @@ mod tests {
     }
 
     #[test]
+    fn direct_target_keyboard_interactive_dry_run_does_not_require_default_password_env() {
+        let known_hosts_path = temporary_workspace().join("known_hosts");
+        let mut output = Vec::new();
+        let mut error_output = Vec::new();
+
+        let outcome = run(
+            [
+                "ops@example.com".to_owned(),
+                "--known-hosts".to_owned(),
+                known_hosts_path.display().to_string(),
+                "--keyboard-interactive-env".to_owned(),
+                "RUSTTY_TEST_KI".to_owned(),
+                "--dry-run".to_owned(),
+            ],
+            &mut output,
+            &mut error_output,
+        )
+        .expect("direct target keyboard-interactive dry-run should succeed");
+
+        assert_eq!(outcome, RunOutcome::Success);
+        let output = String::from_utf8(output).expect("output should be valid UTF-8");
+        assert!(output.contains("authentication_methods=keyboard_interactive"));
+        assert!(output.contains("keyboard_interactive_env=RUSTTY_TEST_KI"));
+        assert!(output.contains("password_env=-"));
+        assert!(error_output.is_empty());
+    }
+
+    #[test]
     fn rejects_key_passphrase_env_without_private_key() {
         let error = run(
             [
@@ -2339,6 +2451,7 @@ mod tests {
             imported_from: None,
             private_key_path: None,
             key_passphrase_env: None,
+            keyboard_interactive_env_var: None,
             password_env_var: Some(DEFAULT_PASSWORD_ENV.to_owned()),
             unsafe_accept_host_key: false,
         };
@@ -2363,7 +2476,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_authentication_methods_prefers_public_key_then_password() {
+    fn resolve_authentication_methods_prefers_public_key_then_keyboard_interactive_then_password() {
         let expected_password =
             std::env::var("PATH").expect("PATH should be available during tests");
         let (home_env_var, expected_key_passphrase) = configured_home_dir();
@@ -2385,13 +2498,14 @@ mod tests {
             imported_from: None,
             private_key_path: Some(PathBuf::from("/tmp/id_ed25519")),
             key_passphrase_env: Some(home_env_var.to_owned()),
+            keyboard_interactive_env_var: Some(home_env_var.to_owned()),
             password_env_var: Some("PATH".to_owned()),
             unsafe_accept_host_key: false,
         };
 
         let authentication_methods =
             resolve_authentication_methods(&plan).expect("auth resolution should succeed");
-        assert_eq!(authentication_methods.len(), 2);
+        assert_eq!(authentication_methods.len(), 3);
         match &authentication_methods[0] {
             SshAuthentication::PublicKey {
                 private_key_path,
@@ -2404,15 +2518,44 @@ mod tests {
                 );
             }
             SshAuthentication::Password { .. } => panic!("expected public-key auth first"),
+            SshAuthentication::KeyboardInteractive { .. } => {
+                panic!("expected public-key auth first")
+            }
         }
         match &authentication_methods[1] {
+            SshAuthentication::KeyboardInteractive { responses } => {
+                assert_eq!(responses, &vec![expected_key_passphrase.clone()]);
+            }
+            SshAuthentication::Password { .. } => {
+                panic!("expected keyboard-interactive fallback second")
+            }
+            SshAuthentication::PublicKey { .. } => {
+                panic!("expected keyboard-interactive fallback second")
+            }
+        }
+        match &authentication_methods[2] {
             SshAuthentication::Password {
                 password: resolved_password,
             } => {
                 assert_eq!(resolved_password, &expected_password)
             }
             SshAuthentication::PublicKey { .. } => panic!("expected password fallback second"),
+            SshAuthentication::KeyboardInteractive { .. } => {
+                panic!("expected password fallback second")
+            }
         }
+    }
+
+    #[test]
+    fn split_keyboard_interactive_responses_keeps_line_order() {
+        assert_eq!(
+            split_keyboard_interactive_responses("first\nsecond\r\n"),
+            vec!["first".to_owned(), "second".to_owned(), String::new()]
+        );
+        assert_eq!(
+            split_keyboard_interactive_responses(""),
+            vec![String::new()]
+        );
     }
 
     fn configured_home_dir() -> (&'static str, String) {

@@ -17,6 +17,7 @@ port forwarding, and non-GUI access to the RusTTY connection stack.
 * session-backed SSH invocation planning
 * direct-target SSH invocation planning
 * OpenSSH private-key authentication with optional passphrase indirection
+* keyboard-interactive authentication with environment-driven prompt responses
 * password-authenticated SSH exec transport for remote commands
 * local TCP port forwarding through SSH `direct-tcpip`
 * remote TCP forwarding through SSH `tcpip-forward`
@@ -55,11 +56,11 @@ The bootstrap CLI is already scriptable and explicit:
   with a requested remote PTY.
 
 Live transport already supports both remote command execution and interactive
-shells. Public keys and passwords are read through explicit CLI or session
-configuration, and host keys are resolved through RusTTY's explicit
-known-hosts flow. Local TCP, remote TCP, and dynamic SOCKS listeners stay
-active for the lifetime of the SSH session and share the same authenticated
-connection.
+shells. Public keys, keyboard-interactive responses, and passwords are read
+through explicit CLI or session configuration, and host keys are resolved
+through RusTTY's explicit known-hosts flow. Local TCP, remote TCP, and dynamic
+SOCKS listeners stay active for the lifetime of the SSH session and share the
+same authenticated connection.
 
 == Configuration and Storage
 
@@ -70,9 +71,10 @@ Imported PuTTY sessions remain migration inputs, not the ongoing write target,
 but their provenance is surfaced in dry-run output and session listings.
 
 Saved RusTTY SSH sessions can now also carry a preferred `username`,
-`private_key_path`, `key_passphrase_env`, and `password_env`. `rusplink` uses
-those values automatically unless the caller overrides them with `--username`,
-`--private-key`, `--key-passphrase-env`, or `--password-env`.
+`private_key_path`, `key_passphrase_env`, `keyboard_interactive_env`, and
+`password_env`. `rusplink` uses those values automatically unless the caller
+overrides them with `--username`, `--private-key`, `--key-passphrase-env`,
+`--keyboard-interactive-env`, or `--password-env`.
 
 Saved RusTTY sessions can also carry reusable local forwarding rules through
 `port_forwards`. CLI-provided `--local-forward` values are appended to those
@@ -92,28 +94,34 @@ default location or an explicit `--known-hosts PATH`.
 
 == Authentication and Host Keys
 
-The bootstrap transport currently supports two SSH auth modes:
+The bootstrap transport currently supports three SSH auth modes:
 
 * OpenSSH private-key authentication through `--private-key PATH`
+* keyboard-interactive authentication through `--keyboard-interactive-env ENV`
 * password authentication through `--password-env ENV`
 
-If both are configured, `rusplink` tries public-key auth first and keeps the
-password as a fallback.
+If multiple auth sources are configured, `rusplink` tries public-key auth
+first, then keyboard-interactive, then password authentication.
 
 * `--private-key PATH` selects the OpenSSH private key to load.
 * `--key-passphrase-env ENV` selects the environment variable that contains
   the private-key passphrase when the selected key is encrypted.
+* `--keyboard-interactive-env ENV` selects the environment variable that
+  contains newline-separated responses for server prompts.
 * `--password-env ENV` selects the environment variable that contains the SSH
   password.
 * Without `--password-env`, `rusplink` reads `RUSTTY_SSH_PASSWORD` only when
-  no private key is configured.
+  no private key or keyboard-interactive response source is configured.
 * `--username USER` overrides the username for session-backed connections.
 * Direct targets can also supply the username through `user@host`.
 * Saved sessions can provide default `username`, `private_key_path`,
-  `key_passphrase_env`, and `password_env` values, so recurring SSH targets no
-  longer need to repeat them on every invocation.
+  `key_passphrase_env`, `keyboard_interactive_env`, and `password_env` values,
+  so recurring SSH targets no longer need to repeat them on every invocation.
 * `~` in private-key paths is expanded against `HOME` or `USERPROFILE` before
   the SSH transport tries to load the key.
+* Scripted keyboard-interactive responses are consumed in prompt order, one
+  line per prompt. Extra configured lines are ignored once authentication
+  finishes.
 
 Host-key handling now follows the RusTTY session policy plus the local
 known-hosts file:
@@ -167,10 +175,11 @@ SOCKS listeners in one place.
 The current bootstrap output is line-oriented and script-friendly. Dry-run
 plans expose origin, config path, known-hosts path, host, port, command,
 ordered authentication methods, private-key path, key-passphrase source,
-password source, host-key policy, transport host-key mode, storage origin, and
-forwarding metadata. Session listings now also expose stored usernames,
-private-key paths, key-passphrase environment variable names, password
-environment variable names, plus local-forward, remote-forward, and
+keyboard-interactive response source, password source, host-key policy,
+transport host-key mode, storage origin, and forwarding metadata. Session
+listings now also expose stored usernames, private-key paths, key-passphrase
+environment variable names, keyboard-interactive environment variable names,
+password environment variable names, plus local-forward, remote-forward, and
 dynamic-forward counts so operators can review reusable auth defaults without
 opening the TOML file manually.
 
@@ -233,6 +242,11 @@ rusplink ops@example.com --private-key ~/.ssh/id_ed25519 --dry-run
 
 [source,text]
 ----
+rusplink ops@example.com --keyboard-interactive-env RUSTTY_KI_RESPONSES --dry-run
+----
+
+[source,text]
+----
 rusplink ops@example.com --local-forward 15432=db.internal:5432 --dry-run
 ----
 
@@ -266,6 +280,11 @@ RUSTTY_SSH_PASSWORD=secret rusplink ops@example.com --dynamic-forward 127.0.0.1:
 RUSTTY_PROD_KEY_PASSPHRASE=secret rusplink --session production --private-key ~/.ssh/id_ed25519 --key-passphrase-env RUSTTY_PROD_KEY_PASSPHRASE --unsafe-accept-host-key
 ----
 
+[source,text]
+----
+RUSTTY_KI_RESPONSES="$(printf '123456\n')" rusplink ops@example.com --keyboard-interactive-env RUSTTY_KI_RESPONSES --unsafe-accept-host-key
+----
+
 == Current Limits
 
 Current bootstrap limits include:
@@ -276,7 +295,9 @@ Current bootstrap limits include:
   PPK loading is not implemented yet
 * dynamic forwarding currently supports SOCKS5 `CONNECT`, not `BIND` or
   `UDP ASSOCIATE`
-* agent auth and keyboard-interactive auth are not implemented yet
+* keyboard-interactive auth is currently environment-driven; interactive local
+  challenge prompts are not implemented yet
+* agent auth is not implemented yet
 * `ask` still lacks an interactive prompt for unknown hosts, so it requires a
   pre-trusted exact known-host entry for live execution
 * known-host matching is intentionally conservative and currently ignores

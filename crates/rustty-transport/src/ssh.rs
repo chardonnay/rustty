@@ -10,7 +10,7 @@ use std::{
 
 use crossterm::terminal;
 use russh::keys::{PrivateKeyWithHashAlg, load_secret_key};
-use russh::{ChannelMsg, Disconnect, client};
+use russh::{ChannelMsg, Disconnect, client, client::KeyboardInteractiveAuthResponse};
 use ssh_key::{HashAlg, PublicKey};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -78,6 +78,11 @@ pub enum SshAuthentication {
         private_key_path: PathBuf,
         /// Optional decrypted passphrase for the key file.
         key_passphrase: Option<String>,
+    },
+    /// Keyboard-interactive authentication with scripted responses.
+    KeyboardInteractive {
+        /// Ordered responses supplied to server prompts.
+        responses: Vec<String>,
     },
 }
 
@@ -260,6 +265,13 @@ pub enum TransportError {
         /// Underlying key-loading error.
         source: russh::keys::Error,
     },
+    /// The configured keyboard-interactive response list ended before the server prompts did.
+    MissingKeyboardInteractiveResponses {
+        /// Number of prompts requested by the server in the current round.
+        requested_prompts: usize,
+        /// Number of configured responses still available.
+        available_responses: usize,
+    },
     /// The remote command or shell completed without reporting an exit status.
     MissingExitStatus,
     /// The server did not expose a host key decision to the caller.
@@ -318,6 +330,15 @@ impl fmt::Display for TransportError {
                     path.display()
                 )
             }
+            Self::MissingKeyboardInteractiveResponses {
+                requested_prompts,
+                available_responses,
+            } => {
+                write!(
+                    formatter,
+                    "keyboard-interactive authentication requested {requested_prompts} prompt responses but only {available_responses} remained configured"
+                )
+            }
             Self::MissingExitStatus => {
                 write!(formatter, "remote session finished without an exit status")
             }
@@ -357,6 +378,7 @@ impl std::error::Error for TransportError {
             | Self::RemoteForwardAssignedPort { .. }
             | Self::AuthenticationRejected
             | Self::MissingAuthentication
+            | Self::MissingKeyboardInteractiveResponses { .. }
             | Self::MissingExitStatus
             | Self::MissingVerifiedHostKey
             | Self::HostKeyMismatch { .. } => None,
@@ -699,6 +721,12 @@ async fn authenticate_session(
                     .await
                     .map_err(TransportError::Russh)?
             }
+            SshAuthentication::KeyboardInteractive { responses } => {
+                if authenticate_keyboard_interactive(session, username, responses).await? {
+                    return Ok(());
+                }
+                continue;
+            }
         };
 
         if auth_result.success() {
@@ -707,6 +735,45 @@ async fn authenticate_session(
     }
 
     Err(TransportError::AuthenticationRejected)
+}
+
+async fn authenticate_keyboard_interactive(
+    session: &mut client::Handle<ClientHandler>,
+    username: &str,
+    responses: &[String],
+) -> Result<bool, TransportError> {
+    let mut next_response_index = 0;
+    let mut auth_response = session
+        .authenticate_keyboard_interactive_start(username.to_owned(), None::<String>)
+        .await
+        .map_err(TransportError::Russh)?;
+
+    loop {
+        match auth_response {
+            KeyboardInteractiveAuthResponse::Success => return Ok(true),
+            KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
+            KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                let available_responses = responses.len().saturating_sub(next_response_index);
+                let requested_prompts = prompts.len();
+                if available_responses < requested_prompts {
+                    return Err(TransportError::MissingKeyboardInteractiveResponses {
+                        requested_prompts,
+                        available_responses,
+                    });
+                }
+
+                let prompt_responses = responses
+                    [next_response_index..next_response_index + requested_prompts]
+                    .to_vec();
+                next_response_index += requested_prompts;
+
+                auth_response = session
+                    .authenticate_keyboard_interactive_respond(prompt_responses)
+                    .await
+                    .map_err(TransportError::Russh)?;
+            }
+        }
+    }
 }
 
 async fn handle_shell_channel_message(
@@ -1529,6 +1596,25 @@ mod tests {
                 assert_eq!(key_passphrase.as_deref(), Some("secret"));
             }
             SshAuthentication::Password { .. } => panic!("expected public-key auth"),
+            SshAuthentication::KeyboardInteractive { .. } => {
+                panic!("expected public-key auth")
+            }
+        }
+    }
+
+    #[test]
+    fn keyboard_interactive_auth_configuration_is_stable_data() {
+        let authentication = SshAuthentication::KeyboardInteractive {
+            responses: vec!["123456".to_owned(), "ops".to_owned()],
+        };
+
+        match authentication {
+            SshAuthentication::KeyboardInteractive { responses } => {
+                assert_eq!(responses, vec!["123456", "ops"]);
+            }
+            SshAuthentication::Password { .. } | SshAuthentication::PublicKey { .. } => {
+                panic!("expected keyboard-interactive auth")
+            }
         }
     }
 

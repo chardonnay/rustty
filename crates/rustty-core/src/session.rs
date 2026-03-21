@@ -151,6 +151,8 @@ pub struct SessionConfig {
     pub private_key_path: Option<String>,
     /// Environment variable name that stores the private-key passphrase.
     pub key_passphrase_env: Option<String>,
+    /// Environment variable name that stores keyboard-interactive responses.
+    pub keyboard_interactive_env: Option<String>,
     /// Override port if different from the protocol default.
     pub port: Option<u16>,
     /// SSH host-key handling policy.
@@ -180,6 +182,7 @@ impl SessionConfig {
             password_env: None,
             private_key_path: None,
             key_passphrase_env: None,
+            keyboard_interactive_env: None,
             port: None,
             host_key_policy: HostKeyPolicy::Ask,
             saved_in: StorageFormat::Rustty,
@@ -221,6 +224,16 @@ impl SessionConfig {
     #[must_use]
     pub fn with_key_passphrase_env(mut self, key_passphrase_env: impl Into<String>) -> Self {
         self.key_passphrase_env = Some(key_passphrase_env.into());
+        self
+    }
+
+    /// Sets the preferred keyboard-interactive response environment variable name.
+    #[must_use]
+    pub fn with_keyboard_interactive_env(
+        mut self,
+        keyboard_interactive_env: impl Into<String>,
+    ) -> Self {
+        self.keyboard_interactive_env = Some(keyboard_interactive_env.into());
         self
     }
 
@@ -303,6 +316,17 @@ mod tests {
         assert_eq!(
             session.key_passphrase_env.as_deref(),
             Some("RUSTTY_PROD_KEY_PASSPHRASE")
+        );
+    }
+
+    #[test]
+    fn session_can_store_keyboard_interactive_defaults() {
+        let session = SessionConfig::new("prod", Protocol::Ssh)
+            .with_keyboard_interactive_env("RUSTTY_PROD_KI_RESPONSES");
+
+        assert_eq!(
+            session.keyboard_interactive_env.as_deref(),
+            Some("RUSTTY_PROD_KI_RESPONSES")
         );
     }
 

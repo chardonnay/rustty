@@ -2,6 +2,16 @@
 
 == Unreleased
 
+[#rusplink-keyboard-interactive-auth]
+=== Keyboard-interactive authentication
+
+* Added `--keyboard-interactive-env ENV` so `rusplink` can feed newline-
+  separated prompt responses into SSH keyboard-interactive login flows.
+* Added ordered auth resolution so `rusplink` now prefers public-key auth,
+  then keyboard-interactive auth, then password authentication.
+* Extended dry-run output and session listings to expose saved
+  `keyboard_interactive_env` defaults and active auth ordering.
+
 [#rusplink-remote-forwarding]
 === Remote port forwarding
 

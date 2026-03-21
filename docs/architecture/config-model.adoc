@@ -22,7 +22,8 @@ The initial configuration crate models:
 * the product name,
 * a session store with normalized sessions,
 * optional per-session SSH username, private-key path, key-passphrase
-  environment variable, and password-environment defaults,
+  environment variable, keyboard-interactive response environment variable,
+  and password-environment defaults,
 * optional per-session SSH local port-forward definitions,
 * optional per-session SSH remote port-forward definitions,
 * optional per-session SSH dynamic-forward listeners,
@@ -31,13 +32,13 @@ The initial configuration crate models:
 
 Session names are now validated as unique so CLI tools such as `rusplink` can
 load them deterministically by name. Empty stored SSH usernames and empty
-`password_env`, `private_key_path`, and `key_passphrase_env` values are
-rejected during validation so bootstrap CLIs do not have to guess how to
-recover from malformed auth defaults. `key_passphrase_env` is also rejected
-when no `private_key_path` is present. Empty saved local port-forward source or
-target strings are also rejected during validation. Empty saved remote-forward
-source or target strings and empty saved dynamic-forward listeners are rejected
-during validation as well.
+`password_env`, `private_key_path`, `key_passphrase_env`, and
+`keyboard_interactive_env` values are rejected during validation so bootstrap
+CLIs do not have to guess how to recover from malformed auth defaults.
+`key_passphrase_env` is also rejected when no `private_key_path` is present.
+Empty saved local port-forward source or target strings are also rejected
+during validation. Empty saved remote-forward source or target strings and
+empty saved dynamic-forward listeners are rejected during validation as well.
 
 == Sample Configuration
 
@@ -57,14 +58,18 @@ session definition.
 For SSH-family tools, RusTTY resolves auth preferences in this order:
 
 * CLI overrides such as `--username`, `--private-key`, `--key-passphrase-env`,
-  and `--password-env`
+  `--keyboard-interactive-env`, and `--password-env`
 * saved session defaults from the RusTTY config
 * `RUSTTY_SSH_PASSWORD` as the implicit password source only when no private
-  key is configured
+  key or keyboard-interactive response source is configured
 
-This keeps public-key-only sessions from requiring an unnecessary password
-environment variable while still preserving the bootstrap password flow for
-direct targets and simple saved sessions.
+This keeps public-key-only and keyboard-interactive-only sessions from
+requiring an unnecessary password environment variable while still preserving
+the bootstrap password flow for direct targets and simple saved sessions.
+
+Keyboard-interactive responses are currently stored as the name of an
+environment variable. `rusplink` reads that variable at execution time and
+splits the value into ordered prompt responses, one line per response.
 
 == Local Port-Forward Storage
 
@@ -125,9 +130,9 @@ config schema and on-disk validation path.
 
 The same config schema can now also be consumed by `rusplink` for session
 listing, SSH dry-run planning, and live bootstrap transport with either
-password or public-key authentication. Saved local port-forwards, remote
-port-forwards, and dynamic-forward listeners are now also loaded into
-`rusplink` execution plans and live SSH sessions.
+password, keyboard-interactive, or public-key authentication. Saved local
+port-forwards, remote port-forwards, and dynamic-forward listeners are now
+also loaded into `rusplink` execution plans and live SSH sessions.
 
 == Known-Hosts Path Policy
 

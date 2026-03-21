@@ -51,6 +51,17 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Extended `rusplink` dry-run and session-listing output so auth preference
   order and saved key defaults are visible in script-friendly output.
 
+[#suite-rusplink-keyboard-interactive-auth]
+=== rusplink keyboard-interactive authentication
+
+* Added reusable per-session SSH `keyboard_interactive_env` fields to the
+  RusTTY config schema.
+* Added environment-driven keyboard-interactive authentication to `rusplink`,
+  using newline-separated prompt responses resolved at execution time.
+* Extended `rusplink` dry-run and session-listing output so
+  keyboard-interactive defaults and auth ordering are visible in
+  script-friendly output.
+
 [#suite-rusplink-local-forwarding]
 === rusplink local port forwarding
 

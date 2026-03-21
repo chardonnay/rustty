@@ -156,6 +156,17 @@ impl AppConfig {
                 ));
             }
 
+            if stored_session
+                .session
+                .keyboard_interactive_env
+                .as_deref()
+                .is_some_and(str::is_empty)
+            {
+                return Err(ValidationError::EmptySessionKeyboardInteractiveEnv(
+                    stored_session.session.name.clone(),
+                ));
+            }
+
             if stored_session.session.key_passphrase_env.is_some()
                 && stored_session.session.private_key_path.is_none()
             {
@@ -446,6 +457,23 @@ mod tests {
         assert_eq!(
             config.validate(),
             Err(ValidationError::EmptySessionKeyPassphraseEnv(
+                "broken".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn validate_rejects_empty_keyboard_interactive_env() {
+        let mut config = AppConfig::sample();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("broken", Protocol::Ssh)
+                .with_host("broken.example")
+                .with_keyboard_interactive_env(""),
+        ));
+
+        assert_eq!(
+            config.validate(),
+            Err(ValidationError::EmptySessionKeyboardInteractiveEnv(
                 "broken".to_owned()
             ))
         );

@@ -11,11 +11,12 @@ use eframe::{
 };
 use rustty_config::StoredSession;
 use rustty_core::{ALL_TOOLS, PRODUCT_NAME, Protocol};
+use rustty_transport::TerminalSize;
 
 use crate::model::{
-    CommandRunnerState, LauncherModel, LauncherOptions, LauncherView, TerminalTranscriptEntry,
-    TerminalTranscriptTone, TerminalWindowSnapshot, host_key_policy_label, import_source_label,
-    session_launch_preview, storage_format_label,
+    CommandRunnerState, InteractiveShellState, LauncherModel, LauncherOptions, LauncherView,
+    TerminalTranscriptEntry, TerminalTranscriptTone, TerminalWindowSnapshot, host_key_policy_label,
+    import_source_label, session_launch_preview, storage_format_label,
 };
 
 /// Runs the native RusTTY launcher window.
@@ -628,7 +629,7 @@ impl RusttyApp {
             protocol_badge(ui, snapshot.protocol);
             ui.label(RichText::new(&snapshot.endpoint).color(Color32::from_rgb(99, 73, 60)));
             ui.label(
-                RichText::new(terminal_state_label(&snapshot.command_runner_state))
+                RichText::new(window_activity_label(snapshot))
                     .color(Color32::from_rgb(108, 79, 64)),
             );
         });
@@ -636,7 +637,7 @@ impl RusttyApp {
         ui.add_space(8.0);
         ui.label(
             RichText::new(
-                "This dedicated session window keeps command history, captured output, and host-key decisions separate from the launcher so `rustty` can evolve toward a real embedded terminal.",
+                "This dedicated session window now hosts both saved-session command runs and the first live SSH shell workflow, while RusTTY grows toward fuller terminal emulation.",
             )
             .color(Color32::from_rgb(102, 77, 64)),
         );
@@ -659,6 +660,20 @@ impl RusttyApp {
                 return;
             }
 
+            let shell_busy = matches!(
+                snapshot.shell_state,
+                InteractiveShellState::ProbingHostKey(_)
+                    | InteractiveShellState::AwaitingHostKeyConfirmation(_)
+                    | InteractiveShellState::Connecting(_)
+                    | InteractiveShellState::Running(_)
+            );
+            let command_busy = matches!(
+                snapshot.command_runner_state,
+                CommandRunnerState::ProbingHostKey(_)
+                    | CommandRunnerState::AwaitingHostKeyConfirmation(_)
+                    | CommandRunnerState::Running(_)
+            );
+
             Grid::new("rustty-terminal-command-grid")
                 .num_columns(2)
                 .spacing(Vec2::new(16.0, 8.0))
@@ -674,7 +689,44 @@ impl RusttyApp {
 
             ui.add_space(8.0);
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Run command").clicked() {
+                if ui
+                    .add_enabled(
+                        !shell_busy && !command_busy,
+                        egui::Button::new("Start interactive shell"),
+                    )
+                    .clicked()
+                {
+                    let terminal_size =
+                        estimate_terminal_size(Vec2::new(ui.available_width().max(720.0), 360.0));
+                    if let Err(error) = self
+                        .model
+                        .start_terminal_window_interactive_shell(terminal_size)
+                    {
+                        self.model.set_status_message(error);
+                    }
+                }
+                if ui
+                    .add_enabled(
+                        matches!(
+                            snapshot.shell_state,
+                            InteractiveShellState::Connecting(_)
+                                | InteractiveShellState::Running(_)
+                        ),
+                        egui::Button::new("Disconnect shell"),
+                    )
+                    .clicked()
+                {
+                    if let Err(error) = self.model.shutdown_terminal_window_shell() {
+                        self.model.set_status_message(error);
+                    }
+                }
+                if ui
+                    .add_enabled(
+                        !shell_busy && !command_busy,
+                        egui::Button::new("Run command"),
+                    )
+                    .clicked()
+                {
                     if let Err(error) = self.model.start_terminal_window_command_run() {
                         self.model.set_status_message(error);
                     }
@@ -690,10 +742,13 @@ impl RusttyApp {
                         ),
                     );
                 }
-                if matches!(
+                if (matches!(
                     snapshot.command_runner_state,
                     CommandRunnerState::Finished(_) | CommandRunnerState::Failed(_)
-                ) && ui.button("Clear status").clicked()
+                ) || matches!(
+                    snapshot.shell_state,
+                    InteractiveShellState::Finished(_) | InteractiveShellState::Failed(_)
+                )) && ui.button("Clear status").clicked()
                 {
                     self.model.clear_command_runner_state();
                 }
@@ -714,47 +769,7 @@ impl RusttyApp {
                         ));
                     });
                 }
-                CommandRunnerState::AwaitingHostKeyConfirmation(prompt) => {
-                    ui.add_space(8.0);
-                    Frame::group(ui.style())
-                        .fill(Color32::from_rgb(247, 235, 224))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(209, 163, 126)))
-                        .inner_margin(Margin::same(10))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new("Unknown SSH host key")
-                                    .strong()
-                                    .color(Color32::from_rgb(141, 80, 44)),
-                            );
-                            ui.label(format!(
-                                "Session '{}' reached {}:{} and needs confirmation before credentials are sent.",
-                                prompt.session_name, prompt.host, prompt.port
-                            ));
-                            ui.label(format!("SHA-256 fingerprint: {}", prompt.fingerprint));
-                            ui.label(format!(
-                                "Known-hosts path: {}",
-                                prompt.known_hosts_path.display()
-                            ));
-                            ui.add_space(8.0);
-                            ui.horizontal_wrapped(|ui| {
-                                if ui.button("Trust once").clicked() {
-                                    if let Err(error) = self.model.trust_pending_host_key_once() {
-                                        self.model.set_status_message(error);
-                                    }
-                                }
-                                if ui.button("Trust and save").clicked() {
-                                    if let Err(error) =
-                                        self.model.trust_pending_host_key_and_save()
-                                    {
-                                        self.model.set_status_message(error);
-                                    }
-                                }
-                                if ui.button("Cancel").clicked() {
-                                    self.model.cancel_pending_host_key();
-                                }
-                            });
-                        });
-                }
+                CommandRunnerState::AwaitingHostKeyConfirmation(_) => {}
                 CommandRunnerState::Running(progress) => {
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
@@ -791,12 +806,197 @@ impl RusttyApp {
                     ui.colored_label(Color32::from_rgb(154, 56, 48), error);
                 }
             }
+
+            match &snapshot.shell_state {
+                InteractiveShellState::Idle => {}
+                InteractiveShellState::ProbingHostKey(progress) => {
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        ui.label(format!(
+                            "Probing the SSH host key for the interactive shell '{}' at {}:{}.",
+                            progress.session_name, progress.host, progress.port
+                        ));
+                    });
+                }
+                InteractiveShellState::AwaitingHostKeyConfirmation(_) => {}
+                InteractiveShellState::Connecting(progress) => {
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        ui.label(format!(
+                            "Opening a PTY-backed shell on {}:{} for session '{}'.",
+                            progress.host, progress.port, progress.session_name
+                        ));
+                    });
+                }
+                InteractiveShellState::Running(progress) => {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Interactive shell is live on {}:{} for '{}'. Click the terminal surface below to focus input.",
+                            progress.host, progress.port, progress.session_name
+                        ))
+                        .color(Color32::from_rgb(57, 108, 74)),
+                    );
+                }
+                InteractiveShellState::Finished(report) => {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Interactive shell exited with status {}. Host key: {} ({})",
+                            report.exit_status, report.host_key_fingerprint, report.host_key_source
+                        ))
+                        .color(Color32::from_rgb(57, 108, 74)),
+                    );
+                    if report.persisted_host_key {
+                        ui.label(
+                            RichText::new(
+                                "The accepted host key was appended to the RusTTY known-hosts file.",
+                            )
+                            .color(Color32::from_rgb(57, 108, 74)),
+                        );
+                    }
+                }
+                InteractiveShellState::Failed(error) => {
+                    ui.add_space(8.0);
+                    ui.colored_label(Color32::from_rgb(154, 56, 48), error);
+                }
+            }
+
+            if let Some(prompt) = pending_host_key_prompt(snapshot) {
+                ui.add_space(8.0);
+                self.render_terminal_host_key_prompt(ui, prompt);
+            }
+        });
+
+        ui.add_space(10.0);
+        section_card(ui, "Interactive shell", |ui| {
+            if snapshot.protocol != Protocol::Ssh {
+                ui.label(
+                    RichText::new(
+                        "The live terminal surface will appear here once GUI transport support exists for this protocol.",
+                    )
+                    .italics()
+                    .color(Color32::from_rgb(118, 92, 78)),
+                );
+                return;
+            }
+
+            let shell_is_live = matches!(
+                snapshot.shell_state,
+                InteractiveShellState::Connecting(_) | InteractiveShellState::Running(_)
+            );
+            let response = terminal_surface(
+                ui,
+                if snapshot.shell_screen.is_empty() {
+                    "Interactive shell output will appear here."
+                } else {
+                    &snapshot.shell_screen
+                },
+            );
+            if response.clicked() {
+                response.request_focus();
+            }
+
+            let terminal_size = estimate_terminal_size(response.rect.size());
+            if let Err(error) = self.model.resize_terminal_window_shell(terminal_size) {
+                self.model.set_status_message(error);
+            }
+
+            if shell_is_live && response.has_focus() {
+                if let Err(error) = self.forward_terminal_input(ui.ctx()) {
+                    self.model.set_status_message(error);
+                }
+            }
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(if shell_is_live && response.has_focus() {
+                    "Terminal input is focused. Typed keys and common control keys go to the remote PTY."
+                } else if shell_is_live {
+                    "Click the terminal surface to focus shell input."
+                } else {
+                    "Start an interactive shell to turn this surface into a live SSH terminal."
+                })
+                .italics()
+                .color(Color32::from_rgb(112, 85, 70)),
+            );
         });
 
         ui.add_space(10.0);
         section_card(ui, "Transcript", |ui| {
-            terminal_surface(ui, &snapshot.transcript);
+            transcript_surface(ui, &snapshot.transcript);
         });
+    }
+
+    fn render_terminal_host_key_prompt(
+        &mut self,
+        ui: &mut egui::Ui,
+        prompt: &crate::model::HostKeyPrompt,
+    ) {
+        Frame::group(ui.style())
+            .fill(Color32::from_rgb(247, 235, 224))
+            .stroke(Stroke::new(1.0, Color32::from_rgb(209, 163, 126)))
+            .inner_margin(Margin::same(10))
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("Unknown SSH host key")
+                        .strong()
+                        .color(Color32::from_rgb(141, 80, 44)),
+                );
+                ui.label(format!(
+                    "Session '{}' reached {}:{} and needs confirmation before credentials are sent.",
+                    prompt.session_name, prompt.host, prompt.port
+                ));
+                ui.label(format!("SHA-256 fingerprint: {}", prompt.fingerprint));
+                ui.label(format!(
+                    "Known-hosts path: {}",
+                    prompt.known_hosts_path.display()
+                ));
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Trust once").clicked() {
+                        if let Err(error) = self.model.trust_pending_host_key_once() {
+                            self.model.set_status_message(error);
+                        }
+                    }
+                    if ui.button("Trust and save").clicked() {
+                        if let Err(error) = self.model.trust_pending_host_key_and_save() {
+                            self.model.set_status_message(error);
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.model.cancel_pending_host_key();
+                    }
+                });
+            });
+    }
+
+    fn forward_terminal_input(&mut self, ctx: &Context) -> Result<(), String> {
+        let mut bytes = Vec::new();
+        for event in ctx.input(|input| input.events.clone()) {
+            match event {
+                egui::Event::Text(text) => bytes.extend_from_slice(text.as_bytes()),
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => {
+                    if let Some(mapped) = map_terminal_key(key, modifiers) {
+                        bytes.extend_from_slice(&mapped);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        self.model.send_terminal_window_shell_input(bytes)
     }
 }
 
@@ -977,7 +1177,70 @@ fn terminal_state_label(command_runner_state: &CommandRunnerState) -> &'static s
     }
 }
 
-fn terminal_surface(ui: &mut egui::Ui, transcript: &[TerminalTranscriptEntry]) {
+fn shell_state_label(shell_state: &InteractiveShellState) -> &'static str {
+    match shell_state {
+        InteractiveShellState::Idle => "Shell ready",
+        InteractiveShellState::ProbingHostKey(_) => "Probing shell host key",
+        InteractiveShellState::AwaitingHostKeyConfirmation(_) => {
+            "Waiting for shell host-key confirmation"
+        }
+        InteractiveShellState::Connecting(_) => "Connecting interactive shell",
+        InteractiveShellState::Running(_) => "Interactive shell live",
+        InteractiveShellState::Finished(_) => "Last interactive shell finished",
+        InteractiveShellState::Failed(_) => "Last interactive shell failed",
+    }
+}
+
+fn window_activity_label(snapshot: &TerminalWindowSnapshot) -> &'static str {
+    if !matches!(snapshot.shell_state, InteractiveShellState::Idle) {
+        shell_state_label(&snapshot.shell_state)
+    } else {
+        terminal_state_label(&snapshot.command_runner_state)
+    }
+}
+
+fn pending_host_key_prompt(
+    snapshot: &TerminalWindowSnapshot,
+) -> Option<&crate::model::HostKeyPrompt> {
+    match &snapshot.shell_state {
+        InteractiveShellState::AwaitingHostKeyConfirmation(prompt) => Some(prompt),
+        InteractiveShellState::Idle
+        | InteractiveShellState::ProbingHostKey(_)
+        | InteractiveShellState::Connecting(_)
+        | InteractiveShellState::Running(_)
+        | InteractiveShellState::Finished(_)
+        | InteractiveShellState::Failed(_) => match &snapshot.command_runner_state {
+            CommandRunnerState::AwaitingHostKeyConfirmation(prompt) => Some(prompt),
+            CommandRunnerState::Idle
+            | CommandRunnerState::ProbingHostKey(_)
+            | CommandRunnerState::Running(_)
+            | CommandRunnerState::Finished(_)
+            | CommandRunnerState::Failed(_) => None,
+        },
+    }
+}
+
+fn terminal_surface(ui: &mut egui::Ui, screen: &str) -> egui::Response {
+    Frame::group(ui.style())
+        .fill(Color32::from_rgb(26, 29, 33))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(63, 72, 82)))
+        .inner_margin(Margin::same(12))
+        .show(ui, |ui| {
+            ui.scope(|ui| {
+                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(230, 235, 240));
+                ScrollArea::vertical()
+                    .id_salt("rustty-terminal-screen")
+                    .stick_to_bottom(true)
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(screen).monospace());
+                    });
+            });
+        })
+        .response
+}
+
+fn transcript_surface(ui: &mut egui::Ui, transcript: &[TerminalTranscriptEntry]) {
     Frame::group(ui.style())
         .fill(Color32::from_rgb(26, 29, 33))
         .stroke(Stroke::new(1.0, Color32::from_rgb(63, 72, 82)))
@@ -988,7 +1251,7 @@ fn terminal_surface(ui: &mut egui::Ui, transcript: &[TerminalTranscriptEntry]) {
                 ScrollArea::vertical()
                     .id_salt("rustty-terminal-transcript")
                     .stick_to_bottom(true)
-                    .max_height(360.0)
+                    .max_height(280.0)
                     .show(ui, |ui| {
                         for entry in transcript {
                             ui.label(
@@ -1031,5 +1294,59 @@ fn terminal_entry_body_color(tone: TerminalTranscriptTone) -> Color32 {
         TerminalTranscriptTone::Error => Color32::from_rgb(244, 212, 207),
         TerminalTranscriptTone::Stdout => Color32::from_rgb(224, 229, 235),
         TerminalTranscriptTone::Stderr => Color32::from_rgb(249, 215, 200),
+    }
+}
+
+fn estimate_terminal_size(size: Vec2) -> TerminalSize {
+    let pixel_width = size.x.max(320.0) as u32;
+    let pixel_height = size.y.max(180.0) as u32;
+    let columns = (size.x.max(320.0) / 8.0).floor().max(40.0) as u32;
+    let rows = (size.y.max(180.0) / 18.0).floor().max(10.0) as u32;
+    TerminalSize {
+        columns,
+        rows,
+        pixel_width,
+        pixel_height,
+    }
+}
+
+fn map_terminal_key(key: egui::Key, modifiers: egui::Modifiers) -> Option<Vec<u8>> {
+    if modifiers.ctrl {
+        let control_byte = match key {
+            egui::Key::A => Some(0x01),
+            egui::Key::B => Some(0x02),
+            egui::Key::C => Some(0x03),
+            egui::Key::D => Some(0x04),
+            egui::Key::E => Some(0x05),
+            egui::Key::F => Some(0x06),
+            egui::Key::K => Some(0x0b),
+            egui::Key::L => Some(0x0c),
+            egui::Key::N => Some(0x0e),
+            egui::Key::P => Some(0x10),
+            egui::Key::U => Some(0x15),
+            egui::Key::W => Some(0x17),
+            egui::Key::Z => Some(0x1a),
+            _ => None,
+        };
+        if let Some(byte) = control_byte {
+            return Some(vec![byte]);
+        }
+    }
+
+    match key {
+        egui::Key::Enter => Some(vec![b'\r']),
+        egui::Key::Tab => Some(vec![b'\t']),
+        egui::Key::Backspace => Some(vec![0x7f]),
+        egui::Key::Escape => Some(vec![0x1b]),
+        egui::Key::ArrowUp => Some(b"\x1b[A".to_vec()),
+        egui::Key::ArrowDown => Some(b"\x1b[B".to_vec()),
+        egui::Key::ArrowRight => Some(b"\x1b[C".to_vec()),
+        egui::Key::ArrowLeft => Some(b"\x1b[D".to_vec()),
+        egui::Key::Home => Some(b"\x1b[H".to_vec()),
+        egui::Key::End => Some(b"\x1b[F".to_vec()),
+        egui::Key::PageUp => Some(b"\x1b[5~".to_vec()),
+        egui::Key::PageDown => Some(b"\x1b[6~".to_vec()),
+        egui::Key::Delete => Some(b"\x1b[3~".to_vec()),
+        _ => None,
     }
 }

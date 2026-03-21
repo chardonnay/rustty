@@ -2,6 +2,18 @@
 
 == Unreleased
 
+[#rustty-interactive-shell-window]
+=== Interactive shell window
+
+* Added the first live SSH shell flow to `rustty` through the dedicated
+  saved-session terminal window.
+* Added GUI-side PTY input handling so typed text, common control keys, and
+  resize updates now reach the remote shell without dropping back to
+  `rusplink`.
+* Added a live terminal buffer in the window, including ANSI-sequence
+  stripping, backspace handling, exit-status reporting, and first-connect
+  host-key persistence after shell startup.
+
 [#rustty-terminal-window]
 === Dedicated terminal window
 

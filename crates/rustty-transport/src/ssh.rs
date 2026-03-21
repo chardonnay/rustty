@@ -4,7 +4,8 @@ use std::{
     fmt, io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, mpsc as std_mpsc},
+    thread,
     time::Duration,
 };
 
@@ -222,6 +223,85 @@ pub struct SshShellResult {
     pub exit_status: u32,
     /// Server host key accepted for the SSH session.
     pub verified_host_key: VerifiedHostKey,
+}
+
+/// Events emitted by a live interactive SSH shell session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InteractiveShellEvent {
+    /// The SSH shell connected successfully and verified the server host key.
+    Connected {
+        /// Server host key accepted for the SSH session.
+        verified_host_key: VerifiedHostKey,
+    },
+    /// Remote standard output bytes.
+    Stdout(Vec<u8>),
+    /// Remote standard error bytes.
+    Stderr(Vec<u8>),
+    /// The remote shell exited with a process status.
+    Exited {
+        /// Remote shell exit status.
+        exit_status: u32,
+    },
+    /// The shell session failed before completing normally.
+    Failed(String),
+}
+
+/// The live control handle for a GUI-driven interactive SSH shell session.
+pub struct InteractiveShellSession {
+    control_sender: mpsc::UnboundedSender<InteractiveShellControl>,
+    event_receiver: std_mpsc::Receiver<InteractiveShellEvent>,
+}
+
+impl fmt::Debug for InteractiveShellSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InteractiveShellSession")
+            .finish_non_exhaustive()
+    }
+}
+
+/// The interactive shell session is no longer available.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ShellSessionClosed;
+
+impl fmt::Display for ShellSessionClosed {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("interactive SSH shell session is closed")
+    }
+}
+
+impl std::error::Error for ShellSessionClosed {}
+
+impl InteractiveShellSession {
+    /// Sends raw input bytes to the remote PTY-backed shell.
+    pub fn send_input(&self, data: impl Into<Vec<u8>>) -> Result<(), ShellSessionClosed> {
+        self.control_sender
+            .send(InteractiveShellControl::Input(data.into()))
+            .map_err(|_| ShellSessionClosed)
+    }
+
+    /// Sends a terminal resize event to the remote PTY.
+    pub fn resize(&self, size: TerminalSize) -> Result<(), ShellSessionClosed> {
+        self.control_sender
+            .send(InteractiveShellControl::Resize(size))
+            .map_err(|_| ShellSessionClosed)
+    }
+
+    /// Requests a clean shutdown of the remote shell session.
+    pub fn request_shutdown(&self) -> Result<(), ShellSessionClosed> {
+        self.control_sender
+            .send(InteractiveShellControl::Shutdown)
+            .map_err(|_| ShellSessionClosed)
+    }
+
+    /// Polls the next pending shell event without blocking.
+    pub fn try_recv_event(&self) -> Result<Option<InteractiveShellEvent>, ShellSessionClosed> {
+        match self.event_receiver.try_recv() {
+            Ok(event) => Ok(Some(event)),
+            Err(std_mpsc::TryRecvError::Empty) => Ok(None),
+            Err(std_mpsc::TryRecvError::Disconnected) => Err(ShellSessionClosed),
+        }
+    }
 }
 
 /// Errors returned by RusTTY transport helpers.
@@ -463,6 +543,34 @@ pub fn execute_ssh_command(request: &SshExecRequest) -> Result<SshExecResult, Tr
 /// Runs an interactive SSH shell using the current process terminal.
 pub fn run_interactive_shell(request: &SshShellRequest) -> Result<SshShellResult, TransportError> {
     runtime()?.block_on(async_run_interactive_shell(request))
+}
+
+/// Starts a GUI-driven interactive SSH shell session backed by a dedicated
+/// background thread and a private Tokio runtime.
+#[must_use]
+pub fn start_interactive_shell_session(request: &SshShellRequest) -> InteractiveShellSession {
+    let (control_sender, control_receiver) = mpsc::unbounded_channel();
+    let (event_sender, event_receiver) = std_mpsc::channel();
+    let request = request.clone();
+
+    thread::spawn(move || {
+        let result = runtime().and_then(|runtime| {
+            runtime.block_on(async_run_streaming_interactive_shell(
+                request,
+                control_receiver,
+                event_sender.clone(),
+            ))
+        });
+
+        if let Err(error) = result {
+            let _ = event_sender.send(InteractiveShellEvent::Failed(error.to_string()));
+        }
+    });
+
+    InteractiveShellSession {
+        control_sender,
+        event_receiver,
+    }
 }
 
 /// Probes the remote SSH server and returns the presented host key without
@@ -717,6 +825,112 @@ async fn async_run_interactive_shell(
         exit_status: exit_status.ok_or(TransportError::MissingExitStatus)?,
         verified_host_key,
     })
+}
+
+async fn async_run_streaming_interactive_shell(
+    request: SshShellRequest,
+    mut control_receiver: mpsc::UnboundedReceiver<InteractiveShellControl>,
+    event_sender: std_mpsc::Sender<InteractiveShellEvent>,
+) -> Result<(), TransportError> {
+    let (forward_request_sender, forward_connection_requests) = mpsc::unbounded_channel();
+    let (mut session, verified_host_key) = connect_authenticated_session(
+        &request.host,
+        request.port,
+        &request.username,
+        &request.authentication_methods,
+        &request.host_key_check,
+        forward_request_sender.clone(),
+    )
+    .await?;
+    let mut forward_runtime = ForwardRuntime::start(
+        &session,
+        &request.local_forwards,
+        &request.remote_forwards,
+        &request.dynamic_forwards,
+        forward_request_sender,
+        forward_connection_requests,
+    )
+    .await?;
+
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .map_err(TransportError::Russh)?;
+    channel
+        .request_pty(
+            true,
+            request.term_type.as_str(),
+            request.terminal_size.columns,
+            request.terminal_size.rows,
+            request.terminal_size.pixel_width,
+            request.terminal_size.pixel_height,
+            &[],
+        )
+        .await
+        .map_err(TransportError::Russh)?;
+    channel
+        .request_shell(true)
+        .await
+        .map_err(TransportError::Russh)?;
+
+    let _ = event_sender.send(InteractiveShellEvent::Connected { verified_host_key });
+    let mut input_closed = false;
+    let mut exit_status = None;
+
+    loop {
+        tokio::select! {
+            maybe_control = control_receiver.recv() => {
+                match maybe_control {
+                    Some(InteractiveShellControl::Input(data)) => {
+                        if !data.is_empty() {
+                            channel
+                                .data(&data[..])
+                                .await
+                                .map_err(TransportError::Russh)?;
+                        }
+                    }
+                    Some(InteractiveShellControl::Resize(size)) => {
+                        channel
+                            .window_change(size.columns, size.rows, size.pixel_width, size.pixel_height)
+                            .await
+                            .map_err(TransportError::Russh)?;
+                    }
+                    Some(InteractiveShellControl::Shutdown) | None => {
+                        if !input_closed {
+                            input_closed = true;
+                            channel.eof().await.map_err(TransportError::Russh)?;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            Some(forward_request) = forward_runtime.connection_requests.recv(), if forward_runtime.enabled => {
+                open_forward_channel(&session, forward_request, &mut forward_runtime).await?;
+            }
+            Some(forward_error) = forward_runtime.errors.recv(), if forward_runtime.enabled => {
+                return Err(forward_error);
+            }
+            maybe_message = channel.wait() => {
+                if handle_streaming_shell_channel_message(
+                    maybe_message,
+                    &mut channel,
+                    &event_sender,
+                    &mut exit_status,
+                    &mut input_closed,
+                )
+                .await? {
+                    break;
+                }
+            }
+        }
+    }
+
+    disconnect_session(&mut session, "rustty GUI shell completed").await;
+    let _ = event_sender.send(InteractiveShellEvent::Exited {
+        exit_status: exit_status.ok_or(TransportError::MissingExitStatus)?,
+    });
+    Ok(())
 }
 
 async fn async_probe_ssh_host_key(
@@ -1032,6 +1246,70 @@ async fn handle_shell_channel_message(
                 .await
                 .map_err(TransportError::LocalIo)?;
             stderr.flush().await.map_err(TransportError::LocalIo)?;
+            exit_status.get_or_insert(128);
+            Ok(false)
+        }
+        ChannelMsg::Close => Ok(true),
+        ChannelMsg::Eof
+        | ChannelMsg::Open { .. }
+        | ChannelMsg::OpenFailure(_)
+        | ChannelMsg::WindowAdjusted { .. }
+        | ChannelMsg::Success
+        | ChannelMsg::Failure
+        | ChannelMsg::XonXoff { .. }
+        | _ => Ok(false),
+    }
+}
+
+enum InteractiveShellControl {
+    Input(Vec<u8>),
+    Resize(TerminalSize),
+    Shutdown,
+}
+
+async fn handle_streaming_shell_channel_message(
+    maybe_message: Option<ChannelMsg>,
+    channel: &mut impl ShellChannel,
+    event_sender: &std_mpsc::Sender<InteractiveShellEvent>,
+    exit_status: &mut Option<u32>,
+    input_closed: &mut bool,
+) -> Result<bool, TransportError> {
+    let Some(message) = maybe_message else {
+        return Ok(true);
+    };
+
+    match message {
+        ChannelMsg::Data { data } => {
+            let _ = event_sender.send(InteractiveShellEvent::Stdout(data.to_vec()));
+            Ok(false)
+        }
+        ChannelMsg::ExtendedData { data, .. } => {
+            let _ = event_sender.send(InteractiveShellEvent::Stderr(data.to_vec()));
+            Ok(false)
+        }
+        ChannelMsg::ExitStatus {
+            exit_status: status,
+        } => {
+            *exit_status = Some(status);
+            if !*input_closed {
+                *input_closed = true;
+                channel.eof().await.map_err(TransportError::Russh)?;
+            }
+            Ok(true)
+        }
+        ChannelMsg::ExitSignal {
+            signal_name,
+            error_message,
+            ..
+        } => {
+            if !error_message.is_empty() {
+                let _ = event_sender.send(InteractiveShellEvent::Stderr(
+                    format!("{error_message}\n").into_bytes(),
+                ));
+            }
+            let _ = event_sender.send(InteractiveShellEvent::Stderr(
+                format!("remote exit signal: {signal_name:?}\n").into_bytes(),
+            ));
             exit_status.get_or_insert(128);
             Ok(false)
         }

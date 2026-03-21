@@ -33,6 +33,16 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added a transcript-style presentation for queued commands, stdout, stderr,
   warnings, and completion summaries inside the GUI.
 
+[#suite-rustty-interactive-shell]
+=== rustty interactive shell
+
+* Added the first live SSH shell inside the `rustty` terminal window.
+* Added GUI-side PTY input forwarding, resize propagation, and remote shell
+  exit reporting without leaving the desktop client.
+* Added a streaming shell buffer with lightweight ANSI stripping and
+  backspace handling so basic interactive shells render usefully before full
+  terminal emulation lands.
+
 [#suite-config-foundation]
 === Configuration foundation
 

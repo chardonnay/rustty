@@ -16,8 +16,9 @@ use rustty_core::{
     StorageFormat,
 };
 use rustty_transport::{
-    HostKeyCheck, SshAuthentication, SshExecRequest, VerifiedHostKey, VerifiedHostKeySource,
-    execute_ssh_command, host_key_fingerprint, probe_ssh_host_key,
+    HostKeyCheck, InteractiveShellEvent, InteractiveShellSession, SshAuthentication,
+    SshExecRequest, SshShellRequest, TerminalSize, VerifiedHostKey, VerifiedHostKeySource,
+    execute_ssh_command, host_key_fingerprint, probe_ssh_host_key, start_interactive_shell_session,
 };
 
 /// The filesystem inputs used to start the RusTTY launcher.
@@ -225,6 +226,59 @@ pub enum CommandRunnerState {
     Failed(String),
 }
 
+/// Progress metadata for a live interactive SSH shell.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShellRunProgress {
+    /// Session name or human-readable draft label.
+    pub session_name: String,
+    /// Remote host.
+    pub host: String,
+    /// Remote port.
+    pub port: u16,
+    /// Requested terminal type.
+    pub term_type: String,
+    /// Current PTY size tracked by the GUI.
+    pub terminal_size: TerminalSize,
+}
+
+/// Result of a completed interactive SSH shell session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ShellRunReport {
+    /// Session name the shell belongs to.
+    pub session_name: String,
+    /// Remote host.
+    pub host: String,
+    /// Remote port.
+    pub port: u16,
+    /// Remote shell exit status.
+    pub exit_status: u32,
+    /// Fingerprint of the accepted server host key.
+    pub host_key_fingerprint: String,
+    /// Why the host key was accepted.
+    pub host_key_source: String,
+    /// Whether the host key was newly persisted after connect.
+    pub persisted_host_key: bool,
+}
+
+/// Live state for the GUI-driven interactive shell session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InteractiveShellState {
+    /// No interactive shell work is active.
+    Idle,
+    /// The launcher is probing an unknown host key before opening a shell.
+    ProbingHostKey(ShellRunProgress),
+    /// The launcher is waiting for the operator to confirm a host key.
+    AwaitingHostKeyConfirmation(HostKeyPrompt),
+    /// The GUI shell session is connecting but not yet streaming.
+    Connecting(ShellRunProgress),
+    /// The GUI shell session is active.
+    Running(ShellRunProgress),
+    /// The GUI shell session exited normally.
+    Finished(ShellRunReport),
+    /// The GUI shell session failed.
+    Failed(String),
+}
+
 #[derive(Debug)]
 struct CommandExecutionSpec {
     progress: CommandRunProgress,
@@ -246,6 +300,37 @@ struct PreparedCommandExecution {
 struct PendingHostKeyExecution {
     spec: CommandExecutionSpec,
     verified_host_key: VerifiedHostKey,
+}
+
+#[derive(Debug)]
+struct ShellExecutionSpec {
+    progress: ShellRunProgress,
+    host: String,
+    port: u16,
+    username: String,
+    authentication_methods: Vec<SshAuthentication>,
+    known_hosts_path: PathBuf,
+}
+
+#[derive(Debug)]
+struct PreparedShellExecution {
+    spec: ShellExecutionSpec,
+    host_key_check: HostKeyCheck,
+    persist_host_key_on_connect: bool,
+}
+
+#[derive(Debug)]
+struct PendingShellExecution {
+    spec: ShellExecutionSpec,
+    verified_host_key: VerifiedHostKey,
+}
+
+enum ShellHostKeyProbeEvent {
+    AwaitingHostKeyConfirmation {
+        pending_execution: Box<PendingShellExecution>,
+        prompt: HostKeyPrompt,
+    },
+    Failed(String),
 }
 
 enum CommandRunnerEvent {
@@ -308,6 +393,10 @@ pub struct TerminalWindowSnapshot {
     pub transcript: Vec<TerminalTranscriptEntry>,
     /// Current background command-runner state for the window.
     pub command_runner_state: CommandRunnerState,
+    /// Current interactive-shell state for the window.
+    pub shell_state: InteractiveShellState,
+    /// Current rendered live terminal buffer.
+    pub shell_screen: String,
 }
 
 #[derive(Debug)]
@@ -321,6 +410,14 @@ struct TerminalWindowState {
     command_runner_state: CommandRunnerState,
     command_runner_receiver: Option<Receiver<CommandRunnerEvent>>,
     pending_host_key_execution: Option<PendingHostKeyExecution>,
+    shell_state: InteractiveShellState,
+    shell_screen: String,
+    shell_session: Option<InteractiveShellSession>,
+    shell_probe_receiver: Option<Receiver<ShellHostKeyProbeEvent>>,
+    pending_shell_execution: Option<PendingShellExecution>,
+    shell_verified_host_key: Option<VerifiedHostKey>,
+    persist_shell_host_key_on_connect: bool,
+    shell_persisted_host_key: bool,
 }
 
 impl TerminalWindowState {
@@ -336,13 +433,21 @@ impl TerminalWindowState {
             command_runner_state: CommandRunnerState::Idle,
             command_runner_receiver: None,
             pending_host_key_execution: None,
+            shell_state: InteractiveShellState::Idle,
+            shell_screen: String::new(),
+            shell_session: None,
+            shell_probe_receiver: None,
+            pending_shell_execution: None,
+            shell_verified_host_key: None,
+            persist_shell_host_key_on_connect: false,
+            shell_persisted_host_key: false,
         };
 
         state.push_transcript(
             TerminalTranscriptTone::Info,
             "Session workspace ready",
             format!(
-                "Opened a dedicated RusTTY session window for '{}'. Interactive terminal emulation is still the next milestone, but this window already keeps saved-session command history and host-key decisions separate from the launcher.",
+                "Opened a dedicated RusTTY session window for '{}'. This window keeps saved-session command history, host-key decisions, and live shell state separate from the launcher.",
                 session.name
             ),
         );
@@ -361,6 +466,8 @@ impl TerminalWindowState {
             command_preview,
             transcript: self.transcript.clone(),
             command_runner_state: self.command_runner_state.clone(),
+            shell_state: self.shell_state.clone(),
+            shell_screen: self.shell_screen.clone(),
         }
     }
 
@@ -372,6 +479,21 @@ impl TerminalWindowState {
             )
     }
 
+    fn has_active_shell_task(&self) -> bool {
+        self.shell_session.is_some()
+            || self.shell_probe_receiver.is_some()
+            || matches!(
+                self.shell_state,
+                InteractiveShellState::ProbingHostKey(_)
+                    | InteractiveShellState::Connecting(_)
+                    | InteractiveShellState::Running(_)
+            )
+    }
+
+    fn has_active_task(&self) -> bool {
+        self.has_active_command_task() || self.has_active_shell_task()
+    }
+
     fn command_runner_state_code(&self) -> &'static str {
         match self.command_runner_state {
             CommandRunnerState::Idle => "idle",
@@ -380,6 +502,20 @@ impl TerminalWindowState {
             CommandRunnerState::Running(_) => "running",
             CommandRunnerState::Finished(_) => "finished",
             CommandRunnerState::Failed(_) => "failed",
+        }
+    }
+
+    fn shell_state_code(&self) -> &'static str {
+        match self.shell_state {
+            InteractiveShellState::Idle => "idle",
+            InteractiveShellState::ProbingHostKey(_) => "probing_host_key",
+            InteractiveShellState::AwaitingHostKeyConfirmation(_) => {
+                "awaiting_host_key_confirmation"
+            }
+            InteractiveShellState::Connecting(_) => "connecting",
+            InteractiveShellState::Running(_) => "running",
+            InteractiveShellState::Finished(_) => "finished",
+            InteractiveShellState::Failed(_) => "failed",
         }
     }
 
@@ -635,7 +771,7 @@ impl LauncherModel {
                 );
                 Ok(())
             }
-            Some(terminal_window) if terminal_window.has_active_command_task() => Err(format!(
+            Some(terminal_window) if terminal_window.has_active_task() => Err(format!(
                 "Terminal window '{}' is still busy; reopen that session first or wait for the background task to finish",
                 terminal_window.session_name
             )),
@@ -680,10 +816,14 @@ impl LauncherModel {
             return;
         };
 
-        if terminal_window.has_active_command_task()
+        if terminal_window.has_active_task()
             || matches!(
                 terminal_window.command_runner_state,
                 CommandRunnerState::AwaitingHostKeyConfirmation(_)
+            )
+            || matches!(
+                terminal_window.shell_state,
+                InteractiveShellState::AwaitingHostKeyConfirmation(_)
             )
         {
             terminal_window.visible = false;
@@ -735,14 +875,180 @@ impl LauncherModel {
             .map(|terminal_window| &mut terminal_window.command_input)
     }
 
+    /// Starts a live interactive SSH shell for the current terminal window.
+    pub fn start_terminal_window_interactive_shell(
+        &mut self,
+        terminal_size: TerminalSize,
+    ) -> Result<(), String> {
+        let session_name = {
+            let terminal_window = self.terminal_window.as_ref().ok_or_else(|| {
+                "Open a terminal window for a saved session before starting the shell".to_owned()
+            })?;
+            if terminal_window.has_active_task() {
+                return Err("The terminal window is already busy with another SSH task".to_owned());
+            }
+
+            terminal_window.session_name.clone()
+        };
+
+        let selected_session = self
+            .config()
+            .and_then(|config| config.find_session(&session_name).cloned())
+            .ok_or_else(|| {
+                format!(
+                    "Saved session '{}' is no longer present in the current RusTTY config",
+                    session_name
+                )
+            })?;
+
+        if let Some(terminal_window) = &mut self.terminal_window {
+            terminal_window.visible = true;
+            terminal_window.shell_screen.clear();
+            terminal_window.push_transcript(
+                TerminalTranscriptTone::Info,
+                "Interactive shell requested",
+                format!(
+                    "Opening a live SSH shell for '{}' in the RusTTY terminal window.",
+                    selected_session.session.name
+                ),
+            );
+        }
+
+        match prepare_shell_execution(
+            &selected_session,
+            &self.options.known_hosts_path,
+            terminal_size,
+        )? {
+            ShellPreparation::Ready(prepared_execution) => {
+                if let Some(terminal_window) = &mut self.terminal_window {
+                    terminal_window.shell_state =
+                        InteractiveShellState::Connecting(prepared_execution.spec.progress.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Info,
+                        "Connecting interactive shell",
+                        format!(
+                            "Starting a PTY-backed SSH shell on {}:{} for '{}'.",
+                            prepared_execution.spec.host,
+                            prepared_execution.spec.port,
+                            prepared_execution.spec.progress.session_name
+                        ),
+                    );
+                }
+                self.status_message = format!(
+                    "Starting interactive shell for '{}'",
+                    prepared_execution.spec.progress.session_name
+                );
+                self.start_shell_execution(prepared_execution);
+            }
+            ShellPreparation::RequiresHostKeyProbe(shell_execution_spec) => {
+                let progress = shell_execution_spec.progress.clone();
+                if let Some(terminal_window) = &mut self.terminal_window {
+                    terminal_window.shell_state =
+                        InteractiveShellState::ProbingHostKey(progress.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Info,
+                        "Probing host key",
+                        format!(
+                            "Checking the SSH host key for {}:{} before the interactive shell starts.",
+                            progress.host, progress.port
+                        ),
+                    );
+                }
+                self.status_message =
+                    format!("Probing server host key for '{}'", progress.session_name);
+                self.start_shell_host_key_probe(shell_execution_spec);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Sends raw terminal input to the active interactive shell session.
+    pub fn send_terminal_window_shell_input(&mut self, bytes: Vec<u8>) -> Result<(), String> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+
+        let terminal_window = self
+            .terminal_window
+            .as_ref()
+            .ok_or_else(|| "No terminal window is currently open".to_owned())?;
+        let shell_session = terminal_window
+            .shell_session
+            .as_ref()
+            .ok_or_else(|| "No interactive shell is currently active".to_owned())?;
+        shell_session
+            .send_input(bytes)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Resizes the active interactive shell PTY if the terminal surface changed.
+    pub fn resize_terminal_window_shell(
+        &mut self,
+        terminal_size: TerminalSize,
+    ) -> Result<(), String> {
+        let terminal_window = self
+            .terminal_window
+            .as_mut()
+            .ok_or_else(|| "No terminal window is currently open".to_owned())?;
+
+        let Some(shell_session) = terminal_window.shell_session.as_ref() else {
+            return Ok(());
+        };
+
+        let current_size = match &terminal_window.shell_state {
+            InteractiveShellState::Connecting(progress)
+            | InteractiveShellState::Running(progress)
+            | InteractiveShellState::ProbingHostKey(progress) => progress.terminal_size,
+            InteractiveShellState::Idle
+            | InteractiveShellState::AwaitingHostKeyConfirmation(_)
+            | InteractiveShellState::Finished(_)
+            | InteractiveShellState::Failed(_) => terminal_size,
+        };
+        if current_size == terminal_size {
+            return Ok(());
+        }
+
+        match &mut terminal_window.shell_state {
+            InteractiveShellState::Connecting(progress)
+            | InteractiveShellState::Running(progress)
+            | InteractiveShellState::ProbingHostKey(progress) => {
+                progress.terminal_size = terminal_size;
+            }
+            InteractiveShellState::Idle
+            | InteractiveShellState::AwaitingHostKeyConfirmation(_)
+            | InteractiveShellState::Finished(_)
+            | InteractiveShellState::Failed(_) => {}
+        }
+
+        shell_session
+            .resize(terminal_size)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Requests a clean shutdown of the active interactive shell session.
+    pub fn shutdown_terminal_window_shell(&mut self) -> Result<(), String> {
+        let terminal_window = self
+            .terminal_window
+            .as_ref()
+            .ok_or_else(|| "No terminal window is currently open".to_owned())?;
+        let shell_session = terminal_window
+            .shell_session
+            .as_ref()
+            .ok_or_else(|| "No interactive shell is currently active".to_owned())?;
+        shell_session
+            .request_shutdown()
+            .map_err(|error| error.to_string())
+    }
+
     /// Starts a background SSH command run for the current terminal window.
     pub fn start_terminal_window_command_run(&mut self) -> Result<(), String> {
         let (session_name, command) = {
             let terminal_window = self.terminal_window.as_ref().ok_or_else(|| {
                 "Open a terminal window for a saved session before starting a command".to_owned()
             })?;
-            if terminal_window.has_active_command_task() {
-                return Err("A terminal-window SSH command is already running".to_owned());
+            if terminal_window.has_active_task() {
+                return Err("The terminal window is already busy with another SSH task".to_owned());
             }
 
             let command = terminal_window.command_input.trim();
@@ -825,6 +1131,11 @@ impl LauncherModel {
 
     /// Polls background SSH command activity and updates the launcher state.
     pub fn poll_command_runner(&mut self) {
+        self.poll_command_runner_events();
+        self.poll_interactive_shell_events();
+    }
+
+    fn poll_command_runner_events(&mut self) {
         let Some(terminal_window) = &self.terminal_window else {
             return;
         };
@@ -932,12 +1243,236 @@ impl LauncherModel {
         }
     }
 
+    fn poll_interactive_shell_events(&mut self) {
+        let pending_probe_event = match &self.terminal_window {
+            Some(terminal_window) => terminal_window
+                .shell_probe_receiver
+                .as_ref()
+                .map(|receiver| receiver.try_recv()),
+            None => return,
+        };
+
+        if let Some(probe_result) = pending_probe_event {
+            match probe_result {
+                Ok(ShellHostKeyProbeEvent::AwaitingHostKeyConfirmation {
+                    pending_execution,
+                    prompt,
+                }) => {
+                    let Some(terminal_window) = &mut self.terminal_window else {
+                        return;
+                    };
+                    terminal_window.shell_probe_receiver = None;
+                    terminal_window.pending_shell_execution = Some(*pending_execution);
+                    terminal_window.shell_state =
+                        InteractiveShellState::AwaitingHostKeyConfirmation(prompt.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Warning,
+                        "Host-key confirmation required",
+                        format!(
+                            "RusTTY reached {}:{} for '{}' and needs trust confirmation before the interactive shell starts. Fingerprint: {}.",
+                            prompt.host, prompt.port, prompt.session_name, prompt.fingerprint
+                        ),
+                    );
+                    self.status_message =
+                        format!("Confirm the host key for '{}'", prompt.session_name);
+                }
+                Ok(ShellHostKeyProbeEvent::Failed(error)) => {
+                    let Some(terminal_window) = &mut self.terminal_window else {
+                        return;
+                    };
+                    terminal_window.shell_probe_receiver = None;
+                    terminal_window.pending_shell_execution = None;
+                    terminal_window.shell_state = InteractiveShellState::Failed(error.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Error,
+                        "Interactive shell failed",
+                        error.clone(),
+                    );
+                    self.status_message = error;
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    let Some(terminal_window) = &mut self.terminal_window else {
+                        return;
+                    };
+                    terminal_window.shell_probe_receiver = None;
+                    let error = "Interactive shell host-key probe ended unexpectedly".to_owned();
+                    terminal_window.shell_state = InteractiveShellState::Failed(error.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Error,
+                        "Interactive shell host-key probe ended unexpectedly",
+                        error.clone(),
+                    );
+                    self.status_message = error;
+                }
+            }
+        }
+
+        loop {
+            let next_event = {
+                let Some(terminal_window) = &self.terminal_window else {
+                    return;
+                };
+                let Some(shell_session) = &terminal_window.shell_session else {
+                    return;
+                };
+                shell_session.try_recv_event()
+            };
+
+            match next_event {
+                Ok(Some(InteractiveShellEvent::Connected { verified_host_key })) => {
+                    let Some(terminal_window) = &mut self.terminal_window else {
+                        return;
+                    };
+                    let progress = match &terminal_window.shell_state {
+                        InteractiveShellState::Connecting(progress)
+                        | InteractiveShellState::Running(progress) => progress.clone(),
+                        _ => continue,
+                    };
+                    let fingerprint = host_key_fingerprint(&verified_host_key.public_key);
+                    let mut persisted_host_key = false;
+                    if terminal_window.persist_shell_host_key_on_connect {
+                        match persist_known_host_key(
+                            &self.options.known_hosts_path,
+                            progress.host.as_str(),
+                            progress.port,
+                            &verified_host_key.public_key,
+                        ) {
+                            Ok(result) => persisted_host_key = result.changed,
+                            Err(error) => {
+                                terminal_window.push_transcript(
+                                    TerminalTranscriptTone::Warning,
+                                    "Host key could not be saved",
+                                    format!(
+                                        "Interactive shell connected, but saving the trusted host key failed: {error}"
+                                    ),
+                                );
+                            }
+                        }
+                    }
+
+                    terminal_window.shell_verified_host_key = Some(verified_host_key.clone());
+                    terminal_window.persist_shell_host_key_on_connect = false;
+                    terminal_window.shell_persisted_host_key = persisted_host_key;
+                    terminal_window.shell_state = InteractiveShellState::Running(progress.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Success,
+                        "Interactive shell connected",
+                        format!(
+                            "Live shell started for '{}' on {}:{}.\nHost key: {} ({})",
+                            progress.session_name,
+                            progress.host,
+                            progress.port,
+                            fingerprint,
+                            verified_host_key_source_label(verified_host_key.source)
+                        ),
+                    );
+                    self.status_message =
+                        format!("Interactive shell for '{}' is live", progress.session_name);
+                }
+                Ok(Some(InteractiveShellEvent::Stdout(bytes))) => {
+                    if let Some(terminal_window) = &mut self.terminal_window {
+                        append_shell_output(&mut terminal_window.shell_screen, &bytes);
+                    }
+                }
+                Ok(Some(InteractiveShellEvent::Stderr(bytes))) => {
+                    if let Some(terminal_window) = &mut self.terminal_window {
+                        append_shell_output(&mut terminal_window.shell_screen, &bytes);
+                    }
+                }
+                Ok(Some(InteractiveShellEvent::Exited { exit_status })) => {
+                    let Some(terminal_window) = &mut self.terminal_window else {
+                        return;
+                    };
+                    let progress = match &terminal_window.shell_state {
+                        InteractiveShellState::Running(progress)
+                        | InteractiveShellState::Connecting(progress) => progress.clone(),
+                        _ => continue,
+                    };
+                    let Some(verified_host_key) = terminal_window.shell_verified_host_key.clone()
+                    else {
+                        let error =
+                            "Interactive shell completed without a verified host key".to_owned();
+                        terminal_window.shell_session = None;
+                        terminal_window.shell_state = InteractiveShellState::Failed(error.clone());
+                        terminal_window.push_transcript(
+                            TerminalTranscriptTone::Error,
+                            "Interactive shell metadata missing",
+                            error.clone(),
+                        );
+                        self.status_message = error;
+                        continue;
+                    };
+                    let report = ShellRunReport {
+                        session_name: progress.session_name.clone(),
+                        host: progress.host.clone(),
+                        port: progress.port,
+                        exit_status,
+                        host_key_fingerprint: host_key_fingerprint(&verified_host_key.public_key),
+                        host_key_source: verified_host_key_source_label(verified_host_key.source)
+                            .to_owned(),
+                        persisted_host_key: terminal_window.shell_persisted_host_key,
+                    };
+                    terminal_window.shell_session = None;
+                    terminal_window.shell_verified_host_key = Some(verified_host_key);
+                    terminal_window.shell_state = InteractiveShellState::Finished(report.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Success,
+                        format!("Shell exit status {}", report.exit_status),
+                        format!(
+                            "Interactive shell for '{}' closed on {}:{}.",
+                            report.session_name, report.host, report.port
+                        ),
+                    );
+                    self.status_message = format!(
+                        "Interactive shell for '{}' exited with status {}",
+                        report.session_name, report.exit_status
+                    );
+                }
+                Ok(Some(InteractiveShellEvent::Failed(error))) => {
+                    let Some(terminal_window) = &mut self.terminal_window else {
+                        return;
+                    };
+                    terminal_window.shell_session = None;
+                    terminal_window.shell_state = InteractiveShellState::Failed(error.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Error,
+                        "Interactive shell failed",
+                        error.clone(),
+                    );
+                    self.status_message = error;
+                }
+                Ok(None) => break,
+                Err(_) => {
+                    let Some(terminal_window) = &mut self.terminal_window else {
+                        return;
+                    };
+                    if matches!(
+                        terminal_window.shell_state,
+                        InteractiveShellState::Running(_) | InteractiveShellState::Connecting(_)
+                    ) {
+                        let error = "Interactive shell session ended unexpectedly".to_owned();
+                        terminal_window.shell_state = InteractiveShellState::Failed(error.clone());
+                        terminal_window.push_transcript(
+                            TerminalTranscriptTone::Error,
+                            "Interactive shell ended unexpectedly",
+                            error.clone(),
+                        );
+                        self.status_message = error;
+                    }
+                    terminal_window.shell_session = None;
+                    break;
+                }
+            }
+        }
+    }
+
     /// Returns whether the launcher currently has an active background task.
     #[must_use]
     pub fn has_active_command_task(&self) -> bool {
         self.terminal_window
             .as_ref()
-            .is_some_and(TerminalWindowState::has_active_command_task)
+            .is_some_and(TerminalWindowState::has_active_task)
     }
 
     /// Trusts a pending probed host key for a single run.
@@ -973,6 +1508,24 @@ impl LauncherModel {
         }
         terminal_window.pending_host_key_execution = None;
         terminal_window.command_runner_state = CommandRunnerState::Idle;
+        if let InteractiveShellState::AwaitingHostKeyConfirmation(prompt) =
+            &terminal_window.shell_state
+        {
+            self.status_message = format!(
+                "Cancelled host-key confirmation for '{}'",
+                prompt.session_name
+            );
+            terminal_window.push_transcript(
+                TerminalTranscriptTone::Warning,
+                "Host key rejected",
+                format!(
+                    "Cancelled the host-key prompt for '{}' at {}:{}.",
+                    prompt.session_name, prompt.host, prompt.port
+                ),
+            );
+            terminal_window.pending_shell_execution = None;
+            terminal_window.shell_state = InteractiveShellState::Idle;
+        }
     }
 
     /// Clears the current command-runner result or error.
@@ -983,6 +1536,10 @@ impl LauncherModel {
         terminal_window.pending_host_key_execution = None;
         if !terminal_window.has_active_command_task() {
             terminal_window.command_runner_state = CommandRunnerState::Idle;
+        }
+        terminal_window.pending_shell_execution = None;
+        if !terminal_window.has_active_shell_task() {
+            terminal_window.shell_state = InteractiveShellState::Idle;
         }
     }
 
@@ -1018,6 +1575,12 @@ impl LauncherModel {
                     .is_some_and(|terminal_window| terminal_window.visible)
             ),
             format!("command_runner_state={}", self.command_runner_state_code()),
+            format!(
+                "interactive_shell_state={}",
+                self.terminal_window
+                    .as_ref()
+                    .map_or("none", TerminalWindowState::shell_state_code)
+            ),
             format!("suite_changelog={SUITE_CHANGELOG_PATH}"),
             format!("release_notes={NEXT_RELEASE_NOTES_PATH}"),
         ]
@@ -1086,7 +1649,48 @@ impl LauncherModel {
             .terminal_window
             .as_mut()
             .ok_or_else(|| "No terminal window is currently open".to_owned())?;
-        let Some(pending_execution) = terminal_window.pending_host_key_execution.take() else {
+        if let Some(pending_execution) = terminal_window.pending_host_key_execution.take() {
+            let session_name = pending_execution.spec.progress.session_name.clone();
+            let host = pending_execution.spec.host.clone();
+            let port = pending_execution.spec.port;
+            let fingerprint = host_key_fingerprint(&pending_execution.verified_host_key.public_key);
+
+            let prepared_execution = PreparedCommandExecution {
+                spec: pending_execution.spec,
+                host_key_check: HostKeyCheck::RequireMatch(vec![
+                    pending_execution.verified_host_key.public_key.clone(),
+                ]),
+                persist_host_key_on_success: persist_host_key,
+            };
+
+            terminal_window.push_transcript(
+                TerminalTranscriptTone::Info,
+                if persist_host_key {
+                    "Host key trusted and queued for save"
+                } else {
+                    "Host key trusted for this run"
+                },
+                format!(
+                    "Accepted host key {fingerprint} for '{}' at {}:{}.",
+                    session_name, host, port
+                ),
+            );
+            self.status_message = if persist_host_key {
+                format!(
+                    "Trusted host key for '{}' and queued persistence after a successful run",
+                    prepared_execution.spec.progress.session_name
+                )
+            } else {
+                format!(
+                    "Trusted host key once for '{}'",
+                    prepared_execution.spec.progress.session_name
+                )
+            };
+            self.start_command_execution(prepared_execution);
+            return Ok(());
+        }
+
+        let Some(pending_execution) = terminal_window.pending_shell_execution.take() else {
             return Err("No host-key confirmation is currently pending".to_owned());
         };
         let session_name = pending_execution.spec.progress.session_name.clone();
@@ -1094,12 +1698,12 @@ impl LauncherModel {
         let port = pending_execution.spec.port;
         let fingerprint = host_key_fingerprint(&pending_execution.verified_host_key.public_key);
 
-        let prepared_execution = PreparedCommandExecution {
+        let prepared_execution = PreparedShellExecution {
             spec: pending_execution.spec,
             host_key_check: HostKeyCheck::RequireMatch(vec![
                 pending_execution.verified_host_key.public_key.clone(),
             ]),
-            persist_host_key_on_success: persist_host_key,
+            persist_host_key_on_connect: persist_host_key,
         };
 
         terminal_window.push_transcript(
@@ -1107,7 +1711,7 @@ impl LauncherModel {
             if persist_host_key {
                 "Host key trusted and queued for save"
             } else {
-                "Host key trusted for this run"
+                "Host key trusted for this shell"
             },
             format!(
                 "Accepted host key {fingerprint} for '{}' at {}:{}.",
@@ -1116,7 +1720,7 @@ impl LauncherModel {
         );
         self.status_message = if persist_host_key {
             format!(
-                "Trusted host key for '{}' and queued persistence after a successful run",
+                "Trusted host key for '{}' and queued persistence after connect",
                 prepared_execution.spec.progress.session_name
             )
         } else {
@@ -1125,7 +1729,7 @@ impl LauncherModel {
                 prepared_execution.spec.progress.session_name
             )
         };
-        self.start_command_execution(prepared_execution);
+        self.start_shell_execution(prepared_execution);
         Ok(())
     }
 
@@ -1159,6 +1763,45 @@ impl LauncherModel {
                     }
                 }
                 Err(error) => CommandRunnerEvent::Failed(format!(
+                    "Failed to probe the host key for '{}': {error}",
+                    progress.session_name
+                )),
+            };
+
+            let _ = sender.send(event);
+        });
+    }
+
+    fn start_shell_host_key_probe(&mut self, shell_execution_spec: ShellExecutionSpec) {
+        let (sender, receiver) = mpsc::channel();
+        let progress = shell_execution_spec.progress.clone();
+        let known_hosts_path = shell_execution_spec.known_hosts_path.clone();
+        if let Some(terminal_window) = &mut self.terminal_window {
+            terminal_window.shell_probe_receiver = Some(receiver);
+        }
+
+        thread::spawn(move || {
+            let event = match probe_ssh_host_key(
+                shell_execution_spec.host.as_str(),
+                shell_execution_spec.port,
+            ) {
+                Ok(verified_host_key) => {
+                    let fingerprint = host_key_fingerprint(&verified_host_key.public_key);
+                    ShellHostKeyProbeEvent::AwaitingHostKeyConfirmation {
+                        pending_execution: Box::new(PendingShellExecution {
+                            spec: shell_execution_spec,
+                            verified_host_key,
+                        }),
+                        prompt: HostKeyPrompt {
+                            session_name: progress.session_name,
+                            host: progress.host,
+                            port: progress.port,
+                            fingerprint,
+                            known_hosts_path,
+                        },
+                    }
+                }
+                Err(error) => ShellHostKeyProbeEvent::Failed(format!(
                     "Failed to probe the host key for '{}': {error}",
                     progress.session_name
                 )),
@@ -1230,6 +1873,21 @@ impl LauncherModel {
         });
     }
 
+    fn start_shell_execution(&mut self, prepared_execution: PreparedShellExecution) {
+        let progress = prepared_execution.spec.progress.clone();
+        let request = prepared_execution.build_request();
+        if let Some(terminal_window) = &mut self.terminal_window {
+            terminal_window.shell_state = InteractiveShellState::Connecting(progress);
+            terminal_window.shell_session = Some(start_interactive_shell_session(&request));
+            terminal_window.shell_probe_receiver = None;
+            terminal_window.pending_shell_execution = None;
+            terminal_window.shell_verified_host_key = None;
+            terminal_window.persist_shell_host_key_on_connect =
+                prepared_execution.persist_host_key_on_connect;
+            terminal_window.shell_persisted_host_key = false;
+        }
+    }
+
     fn terminal_window_session(&self) -> Option<StoredSession> {
         let terminal_window = self.terminal_window.as_ref()?;
         self.config()?
@@ -1243,6 +1901,11 @@ enum CommandPreparation {
     RequiresHostKeyProbe(CommandExecutionSpec),
 }
 
+enum ShellPreparation {
+    Ready(PreparedShellExecution),
+    RequiresHostKeyProbe(ShellExecutionSpec),
+}
+
 impl PreparedCommandExecution {
     fn build_request(&self) -> SshExecRequest {
         SshExecRequest {
@@ -1251,6 +1914,23 @@ impl PreparedCommandExecution {
             username: self.spec.username.clone(),
             authentication_methods: self.spec.authentication_methods.clone(),
             command: self.spec.progress.command.clone(),
+            local_forwards: Vec::new(),
+            remote_forwards: Vec::new(),
+            dynamic_forwards: Vec::new(),
+            host_key_check: self.host_key_check.clone(),
+        }
+    }
+}
+
+impl PreparedShellExecution {
+    fn build_request(&self) -> SshShellRequest {
+        SshShellRequest {
+            host: self.spec.host.clone(),
+            port: self.spec.port,
+            username: self.spec.username.clone(),
+            authentication_methods: self.spec.authentication_methods.clone(),
+            term_type: self.spec.progress.term_type.clone(),
+            terminal_size: self.spec.progress.terminal_size,
             local_forwards: Vec::new(),
             remote_forwards: Vec::new(),
             dynamic_forwards: Vec::new(),
@@ -1320,6 +2000,71 @@ fn prepare_command_execution(
             persist_host_key_on_success: true,
         })),
         HostKeyPolicy::Ask => Ok(CommandPreparation::RequiresHostKeyProbe(spec)),
+    }
+}
+
+fn prepare_shell_execution(
+    stored_session: &StoredSession,
+    known_hosts_path: &PathBuf,
+    terminal_size: TerminalSize,
+) -> Result<ShellPreparation, String> {
+    let session = &stored_session.session;
+    if session.protocol != Protocol::Ssh {
+        return Err(format!(
+            "The interactive terminal window currently supports SSH sessions only; '{}' uses {}",
+            session.name,
+            session.protocol.label()
+        ));
+    }
+
+    let host = session
+        .host
+        .clone()
+        .ok_or_else(|| format!("RusTTY session '{}' is missing a host", session.name))?;
+    let port = session.effective_port().unwrap_or(22);
+    let username = resolve_execution_username(session.username.as_deref())?;
+    let authentication_methods = resolve_authentication_methods(session)?;
+    let spec = ShellExecutionSpec {
+        progress: ShellRunProgress {
+            session_name: session.name.clone(),
+            host: host.clone(),
+            port,
+            term_type: resolve_term_type(),
+            terminal_size,
+        },
+        host: host.clone(),
+        port,
+        username,
+        authentication_methods,
+        known_hosts_path: known_hosts_path.clone(),
+    };
+
+    let trusted_keys = load_known_host_keys(known_hosts_path, &host, port)
+        .map_err(|error| format!("Failed to read RusTTY known-hosts file: {error}"))?
+        .into_iter()
+        .map(|known_host| known_host.public_key)
+        .collect::<Vec<_>>();
+
+    if !trusted_keys.is_empty() {
+        return Ok(ShellPreparation::Ready(PreparedShellExecution {
+            spec,
+            host_key_check: HostKeyCheck::RequireMatch(trusted_keys),
+            persist_host_key_on_connect: false,
+        }));
+    }
+
+    match session.host_key_policy {
+        HostKeyPolicy::Strict => Err(format!(
+            "Session '{}' requires a trusted host key in {} before the interactive shell can connect",
+            session.name,
+            known_hosts_path.display()
+        )),
+        HostKeyPolicy::AcceptNew => Ok(ShellPreparation::Ready(PreparedShellExecution {
+            spec,
+            host_key_check: HostKeyCheck::TrustOnFirstUse,
+            persist_host_key_on_connect: true,
+        })),
+        HostKeyPolicy::Ask => Ok(ShellPreparation::RequiresHostKeyProbe(spec)),
     }
 }
 
@@ -1435,6 +2180,13 @@ fn resolve_home_directory() -> Result<PathBuf, String> {
             "cannot expand '~' in the SSH private-key path because HOME/USERPROFILE is missing"
                 .to_owned()
         })
+}
+
+fn resolve_term_type() -> String {
+    env::var("TERM")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "xterm-256color".to_owned())
 }
 
 /// Builds a launch preview for a saved session.
@@ -1575,6 +2327,63 @@ fn session_endpoint_summary(stored_session: &StoredSession) -> String {
     }
 }
 
+fn append_shell_output(buffer: &mut String, bytes: &[u8]) {
+    let chunk = String::from_utf8_lossy(bytes);
+    let mut chars = chunk.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '\u{1b}' => consume_ansi_escape(&mut chars),
+            '\r' => {}
+            '\u{8}' => {
+                let _ = buffer.pop();
+            }
+            '\n' | '\t' => buffer.push(character),
+            control if control.is_control() => {}
+            other => buffer.push(other),
+        }
+    }
+
+    trim_shell_screen(buffer);
+}
+
+fn consume_ansi_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    let Some(next) = chars.next() else {
+        return;
+    };
+
+    match next {
+        '[' => {
+            for character in chars.by_ref() {
+                if ('@'..='~').contains(&character) {
+                    break;
+                }
+            }
+        }
+        ']' => {
+            for character in chars.by_ref() {
+                if character == '\u{7}' {
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn trim_shell_screen(buffer: &mut String) {
+    const MAX_SHELL_SCREEN_CHARS: usize = 120_000;
+    if buffer.chars().count() <= MAX_SHELL_SCREEN_CHARS {
+        return;
+    }
+
+    let trimmed = buffer
+        .chars()
+        .rev()
+        .take(MAX_SHELL_SCREEN_CHARS)
+        .collect::<Vec<_>>();
+    *buffer = trimmed.into_iter().rev().collect();
+}
+
 fn normalized_port(port: &str) -> Option<&str> {
     let trimmed = port.trim();
     (!trimmed.is_empty()).then_some(trimmed)
@@ -1614,7 +2423,7 @@ mod tests {
     use rustty_core::{Protocol, SessionConfig};
 
     use super::{
-        CommandRunnerState, LauncherModel, LauncherOptions, QuickConnectDraft,
+        CommandRunnerState, LauncherModel, LauncherOptions, QuickConnectDraft, append_shell_output,
         session_command_preview, session_launch_preview,
     };
 
@@ -1771,6 +2580,22 @@ mod tests {
             .terminal_window_snapshot()
             .expect("terminal window snapshot should be present");
         assert_eq!(snapshot.command_runner_state, CommandRunnerState::Idle);
+    }
+
+    #[test]
+    fn append_shell_output_strips_basic_ansi_sequences() {
+        let mut buffer = String::new();
+        append_shell_output(&mut buffer, b"\x1b[32mhello\x1b[0m\r\nworld");
+
+        assert_eq!(buffer, "hello\nworld");
+    }
+
+    #[test]
+    fn append_shell_output_applies_backspace() {
+        let mut buffer = String::new();
+        append_shell_output(&mut buffer, b"helo\x08lo");
+
+        assert_eq!(buffer, "hello");
     }
 
     fn temporary_workspace() -> PathBuf {

@@ -13,6 +13,10 @@
   SSH-backed GUI workflow, with transcript history, GUI-side host-key
   confirmation, and captured stdout/stderr reporting.
   xref:../changelogs/rustty.adoc#rustty-terminal-window[Changelog entry]
+* `rustty` can now open a live PTY-backed SSH shell inside that terminal
+  window, with typed input, common control-key forwarding, resize updates,
+  and persisted first-connect host-key trust for `accept_new` sessions.
+  xref:../changelogs/rustty.adoc#rustty-interactive-shell-window[Changelog entry]
 * `rustty` can now run non-interactive SSH commands for saved SSH sessions
   from inside the GUI flow instead of dropping back to the shell.
   xref:../changelogs/rustty.adoc#rustty-gui-command-runner[Changelog entry]

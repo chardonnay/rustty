@@ -143,6 +143,17 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Improved stale-key mismatch diagnostics so RusTTY now points operators at
   the exact `known_hosts` file that needs review.
 
+[#suite-hostkey-import-migration]
+=== Host-key import migration
+
+* Added an explicit `rustty` migration helper for importing exact
+  OpenSSH-style `known_hosts` entries into RusTTY-managed host-key storage.
+* Added dry-run reporting and per-category skip counts so host-key migration
+  remains reviewable when source files contain markers, hashed hosts,
+  wildcards, or negations.
+* Added dedicated documentation for the current migration boundary: OpenSSH-
+  style host-key import now, PuTTY-registry host-key import later.
+
 === Repository bootstrap
 
 * Established the RusTTY workspace, tool map, and shared branch policy.

@@ -79,6 +79,7 @@ The workspace currently provides:
 
 * a Rust workspace with shared core, transport, and UI crates,
 * a config bootstrap flow in `rustty`, including sample session auth defaults,
+  default known-hosts path discovery, and exact OpenSSH-style host-key import,
 * a session-aware `rusplink` CLI with dry-run planning, bootstrap SSH exec
   transport, OpenSSH and PuTTY PPK public-key auth, SSH-agent,
   keyboard-interactive, and password authentication, local TCP forwarding,
@@ -105,8 +106,10 @@ cargo test --workspace
 cargo run -p xtask -- ci
 cargo run -p rustty -- --print-sample-config
 cargo run -p rustty -- --show-default-config-path
+cargo run -p rustty -- --show-default-known-hosts-path
 cargo run -p rustty -- --init-config
 cargo run -p rustty -- --validate-config
+cargo run -p rustty -- --import-known-hosts ~/.ssh/known_hosts --dry-run
 cargo run -p rusplink -- --list-sessions
 cargo run -p rusplink -- --show-default-known-hosts-path
 cargo run -p rusplink -- --session example-ssh --dry-run -- hostname

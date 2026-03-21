@@ -8,7 +8,8 @@ mod store;
 
 pub use error::{ConfigError, ValidationError};
 pub use known_hosts::{
-    KnownHostKey, PersistKnownHostResult, load_known_host_keys, persist_known_host_key,
+    ImportKnownHostsResult, KnownHostKey, PersistKnownHostResult, import_known_hosts,
+    load_known_host_keys, persist_known_host_key,
 };
 pub use model::{
     AppConfig, CURRENT_SCHEMA_VERSION, ImportSource, SessionStore, StoredSession, ToolProfile,

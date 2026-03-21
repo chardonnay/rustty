@@ -1,0 +1,80 @@
+= Host-Key Import
+:toc:
+
+RusTTY can now import exact OpenSSH-style `known_hosts` entries into its own
+managed host-key store. This gives migrations a documented, auditable path
+instead of asking operators to copy files blindly.
+
+== Migration Intent
+
+* Reuse exact host-key trust that already exists in OpenSSH-style
+  `known_hosts` files.
+* Normalize imported entries into the RusTTY-managed `known_hosts` location.
+* Report what was imported, what was already trusted, and what was skipped.
+* Avoid pretending that unsupported patterns were migrated when they were not.
+
+== Supported Input
+
+The current bootstrap import path accepts:
+
+* exact host entries such as `example.com`
+* comma-separated exact aliases such as `example.com,alias.example.com`
+* exact host-and-port entries such as `[db.example.com]:2200`
+
+Each accepted pattern is re-written into RusTTY's canonical storage form, so
+default-port entries land as `host` and non-default-port entries land as
+`[host]:port`.
+
+== Current Limits
+
+The current import helper intentionally skips:
+
+* comment and blank lines
+* marker entries such as `@cert-authority`
+* hashed hostnames
+* wildcard patterns
+* negated patterns
+* malformed or otherwise unsupported exact-pattern forms
+
+PuTTY registry host keys are not imported yet in this bootstrap slice. The
+current migration helper is specifically for OpenSSH-style `known_hosts`
+inputs.
+
+== CLI Flow
+
+[source,text]
+----
+rustty --show-default-known-hosts-path
+----
+
+[source,text]
+----
+rustty --import-known-hosts ~/.ssh/known_hosts
+----
+
+[source,text]
+----
+rustty --import-known-hosts ~/.ssh/known_hosts --dry-run
+----
+
+[source,text]
+----
+rustty --import-known-hosts ~/.ssh/known_hosts --known-hosts /tmp/rustty-known_hosts
+----
+
+`--dry-run` reports the same import statistics without modifying the RusTTY
+destination file.
+
+== Result Reporting
+
+The bootstrap CLI prints a line-oriented summary with:
+
+* source path
+* destination path
+* imported exact patterns
+* already-trusted exact patterns
+* skipped blank/comment lines
+* skipped marker, hashed, wildcard, negated, and unsupported patterns
+
+This makes migration reviews reproducible and easier to attach to release
+notes or support diagnostics.

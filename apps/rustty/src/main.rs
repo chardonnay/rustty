@@ -1,6 +1,9 @@
 use std::{path::PathBuf, process::ExitCode};
 
-use rustty_config::{AppConfig, default_config_path, init_config, load_config};
+use rustty_config::{
+    AppConfig, default_config_path, default_known_hosts_path, import_known_hosts, init_config,
+    load_config,
+};
 
 const USAGE: &str = "\
 RusTTY bootstrap CLI
@@ -10,10 +13,13 @@ Usage:
   rustty --help
   rustty --print-sample-config
   rustty --show-default-config-path
+  rustty --show-default-known-hosts-path
   rustty --init-config [PATH]
   rustty --init-config=PATH
   rustty --validate-config [PATH]
   rustty --validate-config=PATH
+  rustty --import-known-hosts SOURCE [--known-hosts PATH] [--dry-run]
+  rustty --import-known-hosts=SOURCE [--known-hosts PATH] [--dry-run]
 ";
 
 #[derive(Debug, Eq, PartialEq)]
@@ -22,8 +28,14 @@ enum Command {
     Help,
     PrintSampleConfig,
     ShowDefaultConfigPath,
+    ShowDefaultKnownHostsPath,
     InitConfig(Option<PathBuf>),
     ValidateConfig(Option<PathBuf>),
+    ImportKnownHosts {
+        source_path: PathBuf,
+        known_hosts_path: Option<PathBuf>,
+        dry_run: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -51,8 +63,14 @@ fn run() -> Result<(), String> {
         }
         Command::PrintSampleConfig => print_sample_config(),
         Command::ShowDefaultConfigPath => show_default_config_path(),
+        Command::ShowDefaultKnownHostsPath => show_default_known_hosts_path(),
         Command::InitConfig(path) => initialize_config(path),
         Command::ValidateConfig(path) => validate_config(path),
+        Command::ImportKnownHosts {
+            source_path,
+            known_hosts_path,
+            dry_run,
+        } => import_known_hosts_file(source_path, known_hosts_path, dry_run),
     }
 }
 
@@ -61,29 +79,164 @@ where
     I: IntoIterator<Item = String>,
 {
     let arguments = arguments.into_iter().collect::<Vec<_>>();
-    match arguments.as_slice() {
-        [] => Ok(Command::Placeholder),
-        [single] if matches!(single.as_str(), "--help" | "-h") => Ok(Command::Help),
-        [single] if single == "--print-sample-config" => Ok(Command::PrintSampleConfig),
-        [single] if single == "--show-default-config-path" => Ok(Command::ShowDefaultConfigPath),
-        [single] if single == "--init-config" => Ok(Command::InitConfig(None)),
-        [flag, path] if flag == "--init-config" => {
-            Ok(Command::InitConfig(Some(PathBuf::from(path))))
-        }
-        [single] if single == "--validate-config" => Ok(Command::ValidateConfig(None)),
-        [flag, path] if flag == "--validate-config" => {
-            Ok(Command::ValidateConfig(Some(PathBuf::from(path))))
-        }
-        [single] => {
-            if let Some(path) = single.strip_prefix("--init-config=") {
-                return Ok(Command::InitConfig(Some(PathBuf::from(path))));
+    if arguments.is_empty() {
+        return Ok(Command::Placeholder);
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    enum PrimaryCommand {
+        Help,
+        PrintSampleConfig,
+        ShowDefaultConfigPath,
+        ShowDefaultKnownHostsPath,
+        InitConfig(Option<PathBuf>),
+        ValidateConfig(Option<PathBuf>),
+        ImportKnownHosts(PathBuf),
+    }
+
+    let mut primary_command = None;
+    let mut import_destination = None;
+    let mut dry_run = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        let argument = &arguments[index];
+        match argument.as_str() {
+            "--help" | "-h" => {
+                set_command_once(&mut primary_command, PrimaryCommand::Help, argument)?;
             }
-            if let Some(path) = single.strip_prefix("--validate-config=") {
-                return Ok(Command::ValidateConfig(Some(PathBuf::from(path))));
+            "--print-sample-config" => {
+                set_command_once(
+                    &mut primary_command,
+                    PrimaryCommand::PrintSampleConfig,
+                    argument,
+                )?;
             }
-            Err(format!("unsupported argument: {single}\n\n{USAGE}"))
+            "--show-default-config-path" => {
+                set_command_once(
+                    &mut primary_command,
+                    PrimaryCommand::ShowDefaultConfigPath,
+                    argument,
+                )?;
+            }
+            "--show-default-known-hosts-path" => {
+                set_command_once(
+                    &mut primary_command,
+                    PrimaryCommand::ShowDefaultKnownHostsPath,
+                    argument,
+                )?;
+            }
+            "--init-config" => {
+                let path = consume_optional_path(&arguments, &mut index);
+                set_command_once(
+                    &mut primary_command,
+                    PrimaryCommand::InitConfig(path.map(PathBuf::from)),
+                    argument,
+                )?;
+            }
+            "--validate-config" => {
+                let path = consume_optional_path(&arguments, &mut index);
+                set_command_once(
+                    &mut primary_command,
+                    PrimaryCommand::ValidateConfig(path.map(PathBuf::from)),
+                    argument,
+                )?;
+            }
+            "--import-known-hosts" => {
+                let raw_path = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| format!("missing value for --import-known-hosts\n\n{USAGE}"))?;
+                if raw_path.starts_with("--") {
+                    return Err(format!("missing value for --import-known-hosts\n\n{USAGE}"));
+                }
+                set_command_once(
+                    &mut primary_command,
+                    PrimaryCommand::ImportKnownHosts(PathBuf::from(raw_path)),
+                    argument,
+                )?;
+                index += 1;
+            }
+            "--known-hosts" => {
+                let raw_path = arguments
+                    .get(index + 1)
+                    .ok_or_else(|| format!("missing value for --known-hosts\n\n{USAGE}"))?;
+                if raw_path.starts_with("--") {
+                    return Err(format!("missing value for --known-hosts\n\n{USAGE}"));
+                }
+                set_option_once(
+                    &mut import_destination,
+                    PathBuf::from(raw_path),
+                    "duplicate --known-hosts flag",
+                )?;
+                index += 1;
+            }
+            "--dry-run" => {
+                dry_run = true;
+            }
+            _ => {
+                if let Some(path) = argument.strip_prefix("--init-config=") {
+                    set_command_once(
+                        &mut primary_command,
+                        PrimaryCommand::InitConfig(Some(PathBuf::from(path))),
+                        "--init-config",
+                    )?;
+                } else if let Some(path) = argument.strip_prefix("--validate-config=") {
+                    set_command_once(
+                        &mut primary_command,
+                        PrimaryCommand::ValidateConfig(Some(PathBuf::from(path))),
+                        "--validate-config",
+                    )?;
+                } else if let Some(path) = argument.strip_prefix("--import-known-hosts=") {
+                    set_command_once(
+                        &mut primary_command,
+                        PrimaryCommand::ImportKnownHosts(PathBuf::from(path)),
+                        "--import-known-hosts",
+                    )?;
+                } else if let Some(path) = argument.strip_prefix("--known-hosts=") {
+                    set_option_once(
+                        &mut import_destination,
+                        PathBuf::from(path),
+                        "duplicate --known-hosts flag",
+                    )?;
+                } else {
+                    return Err(format!("unsupported argument: {argument}\n\n{USAGE}"));
+                }
+            }
         }
-        _ => Err(format!("unsupported argument combination\n\n{USAGE}")),
+
+        index += 1;
+    }
+
+    match primary_command {
+        Some(PrimaryCommand::Help) => {
+            reject_import_only_flags(import_destination, dry_run)?;
+            Ok(Command::Help)
+        }
+        Some(PrimaryCommand::PrintSampleConfig) => {
+            reject_import_only_flags(import_destination, dry_run)?;
+            Ok(Command::PrintSampleConfig)
+        }
+        Some(PrimaryCommand::ShowDefaultConfigPath) => {
+            reject_import_only_flags(import_destination, dry_run)?;
+            Ok(Command::ShowDefaultConfigPath)
+        }
+        Some(PrimaryCommand::ShowDefaultKnownHostsPath) => {
+            reject_import_only_flags(import_destination, dry_run)?;
+            Ok(Command::ShowDefaultKnownHostsPath)
+        }
+        Some(PrimaryCommand::InitConfig(path)) => {
+            reject_import_only_flags(import_destination, dry_run)?;
+            Ok(Command::InitConfig(path))
+        }
+        Some(PrimaryCommand::ValidateConfig(path)) => {
+            reject_import_only_flags(import_destination, dry_run)?;
+            Ok(Command::ValidateConfig(path))
+        }
+        Some(PrimaryCommand::ImportKnownHosts(source_path)) => Ok(Command::ImportKnownHosts {
+            source_path,
+            known_hosts_path: import_destination,
+            dry_run,
+        }),
+        None => Err(format!("unsupported argument combination\n\n{USAGE}")),
     }
 }
 
@@ -97,6 +250,12 @@ fn print_sample_config() -> Result<(), String> {
 
 fn show_default_config_path() -> Result<(), String> {
     let path = default_config_path().map_err(|error| error.to_string())?;
+    println!("{}", path.display());
+    Ok(())
+}
+
+fn show_default_known_hosts_path() -> Result<(), String> {
+    let path = default_known_hosts_path().map_err(|error| error.to_string())?;
     println!("{}", path.display());
     Ok(())
 }
@@ -128,11 +287,88 @@ fn validate_config(path: Option<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
+fn import_known_hosts_file(
+    source_path: PathBuf,
+    known_hosts_path: Option<PathBuf>,
+    dry_run: bool,
+) -> Result<(), String> {
+    let destination_path = resolve_known_hosts_path(known_hosts_path)?;
+    let result = import_known_hosts(&source_path, &destination_path, dry_run)
+        .map_err(|error| error.to_string())?;
+    let mode = if dry_run { "dry-run" } else { "import" };
+    println!(
+        "RusTTY known-hosts {mode}: source={}, destination={}, imported={}, already_present={}, skipped_blank_or_comment={}, skipped_marked={}, skipped_hashed={}, skipped_wildcard={}, skipped_negated={}, skipped_unsupported={}, skipped_total={}",
+        result.source_path.display(),
+        result.destination_path.display(),
+        result.imported,
+        result.already_present,
+        result.skipped_blank_or_comment,
+        result.skipped_marked,
+        result.skipped_hashed,
+        result.skipped_wildcard,
+        result.skipped_negated,
+        result.skipped_unsupported,
+        result.skipped_total(),
+    );
+    Ok(())
+}
+
 fn resolve_config_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
     path.map_or_else(
         || default_config_path().map_err(|error| error.to_string()),
         Ok,
     )
+}
+
+fn resolve_known_hosts_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
+    path.map_or_else(
+        || default_known_hosts_path().map_err(|error| error.to_string()),
+        Ok,
+    )
+}
+
+fn consume_optional_path(arguments: &[String], index: &mut usize) -> Option<String> {
+    let next_index = *index + 1;
+    let raw_path = arguments.get(next_index)?;
+    if raw_path.starts_with("--") {
+        return None;
+    }
+    *index = next_index;
+    Some(raw_path.clone())
+}
+
+fn set_command_once<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!(
+            "unsupported argument combination involving {flag}\n\n{USAGE}"
+        ));
+    }
+
+    *slot = Some(value);
+    Ok(())
+}
+
+fn set_option_once<T>(slot: &mut Option<T>, value: T, message: &str) -> Result<(), String> {
+    if slot.is_some() {
+        return Err(format!("{message}\n\n{USAGE}"));
+    }
+
+    *slot = Some(value);
+    Ok(())
+}
+
+fn reject_import_only_flags(path: Option<PathBuf>, dry_run: bool) -> Result<(), String> {
+    if path.is_some() {
+        return Err(format!(
+            "--known-hosts requires --import-known-hosts\n\n{USAGE}"
+        ));
+    }
+    if dry_run {
+        return Err(format!(
+            "--dry-run requires --import-known-hosts\n\n{USAGE}"
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -168,6 +404,44 @@ mod tests {
                 "/tmp/rustty.toml"
             ))))
         );
+    }
+
+    #[test]
+    fn parses_show_default_known_hosts_path() {
+        assert_eq!(
+            parse_command(["--show-default-known-hosts-path".to_owned()]),
+            Ok(Command::ShowDefaultKnownHostsPath)
+        );
+    }
+
+    #[test]
+    fn parses_import_known_hosts_with_destination_and_dry_run() {
+        assert_eq!(
+            parse_command([
+                "--import-known-hosts".to_owned(),
+                "/tmp/known_hosts".to_owned(),
+                "--known-hosts".to_owned(),
+                "/tmp/rustty-known_hosts".to_owned(),
+                "--dry-run".to_owned(),
+            ]),
+            Ok(Command::ImportKnownHosts {
+                source_path: PathBuf::from("/tmp/known_hosts"),
+                known_hosts_path: Some(PathBuf::from("/tmp/rustty-known_hosts")),
+                dry_run: true,
+            })
+        );
+    }
+
+    #[test]
+    fn rejects_known_hosts_without_import_command() {
+        let error = parse_command([
+            "--show-default-config-path".to_owned(),
+            "--known-hosts".to_owned(),
+            "/tmp/rustty-known_hosts".to_owned(),
+        ])
+        .expect_err("standalone known-hosts flag should fail");
+
+        assert!(error.contains("--known-hosts requires --import-known-hosts"));
     }
 
     #[test]

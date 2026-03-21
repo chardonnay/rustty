@@ -7,6 +7,7 @@ users migrate, but it does not promise a file-for-file or UI-for-UI clone.
 == Compatibility Priorities
 
 * Session import from existing PuTTY data.
+* Host-key migration from existing OpenSSH-style trust stores.
 * Key import and export for PuTTY PPK and OpenSSH formats.
 * Familiar tool boundaries and protocol coverage.
 * Clear documentation for intentional differences.
@@ -18,6 +19,8 @@ users migrate, but it does not promise a file-for-file or UI-for-UI clone.
   continuing to treat PuTTY storage as the write target.
 * Internal structure is Rust-native and workspace-oriented instead of mirroring
   PuTTY's C code layout.
+* Host-key migration currently targets OpenSSH-style `known_hosts` files
+  before any future PuTTY-registry import path.
 
 == Tool Mapping
 

@@ -2,6 +2,17 @@
 
 == Unreleased
 
+[#rustty-hostkey-import]
+=== Host-key import helpers
+
+* Added `--show-default-known-hosts-path` so the `rustty` bootstrap CLI can
+  report RusTTY's managed host-key store location.
+* Added `--import-known-hosts SOURCE [--known-hosts PATH] [--dry-run]` so
+  exact OpenSSH-style `known_hosts` entries can be migrated into RusTTY
+  storage with an explicit summary of imported and skipped patterns.
+* Added dedicated migration documentation for host-key import boundaries and
+  current compatibility limits.
+
 [#rustty-session-auth-defaults]
 === Session auth defaults in sample config
 

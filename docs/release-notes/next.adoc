@@ -10,6 +10,10 @@
 * `rustty` can now show the default config path, initialize a sample config
   file, and validate an existing RusTTY config.
   xref:../changelogs/rustty.adoc#rustty-config-cli[Changelog entry]
+* `rustty` can now show the default RusTTY `known_hosts` path and import exact
+  OpenSSH-style host-key entries into RusTTY-managed storage, including
+  dry-run reporting for migration review.
+  xref:../changelogs/rustty.adoc#rustty-hostkey-import[Changelog entry]
 * The RusTTY config layer now includes default-path resolution and validated
   file persistence helpers.
   xref:../../CHANGELOG.adoc#suite-config-cli[Changelog entry]
@@ -28,6 +32,10 @@
 * RusTTY now resolves a default SSH-agent socket path alongside
   `config.toml` and `known_hosts`.
   xref:../../CHANGELOG.adoc#suite-rusagent-agent-auth[Changelog entry]
+* RusTTY now includes an explicit host-key migration helper for exact
+  OpenSSH-style `known_hosts` entries, with reporting for skipped unsupported
+  patterns.
+  xref:../../CHANGELOG.adoc#suite-hostkey-import-migration[Changelog entry]
 * RusTTY sessions can now also carry validated saved local port-forward
   definitions for `rusplink`.
   xref:../../CHANGELOG.adoc#suite-rusplink-local-forwarding[Changelog entry]

@@ -93,10 +93,11 @@ branches can continue to work through the same queue without losing context.
 * Serial
 
 [#roadmap-import]
-=== 11. PuTTY migration paths (`later`)
+=== 11. PuTTY migration paths (`in_progress`)
 
 * PuTTY session import coverage
-* host-key import and compatibility helpers
+* host-key import and compatibility helpers (`in_progress`)
+  Current bootstrap scope: exact OpenSSH-style `known_hosts` import via `rustty`.
 * OpenSSH config import improvements
 
 [#roadmap-release-hardening]

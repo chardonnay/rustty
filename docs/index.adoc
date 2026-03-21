@@ -23,6 +23,7 @@
 
 * xref:migration/putty-compatibility.adoc[PuTTY Compatibility]
 * xref:migration/session-import.adoc[Session Import]
+* xref:migration/host-key-import.adoc[Host-Key Import]
 * xref:migration/key-import.adoc[Key Import and Export]
 
 == Legal and Releases

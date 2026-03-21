@@ -1,8 +1,8 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use rustty_config::{
-    AppConfig, default_config_path, default_known_hosts_path, import_known_hosts, init_config,
-    load_config,
+    AppConfig, default_config_path, default_known_hosts_path, import_known_hosts,
+    import_putty_host_keys, init_config, load_config,
 };
 
 const USAGE: &str = "\
@@ -20,6 +20,8 @@ Usage:
   rustty --validate-config=PATH
   rustty --import-known-hosts SOURCE [--known-hosts PATH] [--dry-run]
   rustty --import-known-hosts=SOURCE [--known-hosts PATH] [--dry-run]
+  rustty --import-putty-host-keys SOURCE [--known-hosts PATH] [--dry-run]
+  rustty --import-putty-host-keys=SOURCE [--known-hosts PATH] [--dry-run]
 ";
 
 #[derive(Debug, Eq, PartialEq)]
@@ -32,6 +34,11 @@ enum Command {
     InitConfig(Option<PathBuf>),
     ValidateConfig(Option<PathBuf>),
     ImportKnownHosts {
+        source_path: PathBuf,
+        known_hosts_path: Option<PathBuf>,
+        dry_run: bool,
+    },
+    ImportPuttyHostKeys {
         source_path: PathBuf,
         known_hosts_path: Option<PathBuf>,
         dry_run: bool,
@@ -71,6 +78,11 @@ fn run() -> Result<(), String> {
             known_hosts_path,
             dry_run,
         } => import_known_hosts_file(source_path, known_hosts_path, dry_run),
+        Command::ImportPuttyHostKeys {
+            source_path,
+            known_hosts_path,
+            dry_run,
+        } => import_putty_host_keys_file(source_path, known_hosts_path, dry_run),
     }
 }
 
@@ -92,6 +104,7 @@ where
         InitConfig(Option<PathBuf>),
         ValidateConfig(Option<PathBuf>),
         ImportKnownHosts(PathBuf),
+        ImportPuttyHostKeys(PathBuf),
     }
 
     let mut primary_command = None;
@@ -155,6 +168,22 @@ where
                 )?;
                 index += 1;
             }
+            "--import-putty-host-keys" => {
+                let raw_path = arguments.get(index + 1).ok_or_else(|| {
+                    format!("missing value for --import-putty-host-keys\n\n{USAGE}")
+                })?;
+                if raw_path.starts_with("--") {
+                    return Err(format!(
+                        "missing value for --import-putty-host-keys\n\n{USAGE}"
+                    ));
+                }
+                set_command_once(
+                    &mut primary_command,
+                    PrimaryCommand::ImportPuttyHostKeys(PathBuf::from(raw_path)),
+                    argument,
+                )?;
+                index += 1;
+            }
             "--known-hosts" => {
                 let raw_path = arguments
                     .get(index + 1)
@@ -190,6 +219,12 @@ where
                         &mut primary_command,
                         PrimaryCommand::ImportKnownHosts(PathBuf::from(path)),
                         "--import-known-hosts",
+                    )?;
+                } else if let Some(path) = argument.strip_prefix("--import-putty-host-keys=") {
+                    set_command_once(
+                        &mut primary_command,
+                        PrimaryCommand::ImportPuttyHostKeys(PathBuf::from(path)),
+                        "--import-putty-host-keys",
                     )?;
                 } else if let Some(path) = argument.strip_prefix("--known-hosts=") {
                     set_option_once(
@@ -236,6 +271,13 @@ where
             known_hosts_path: import_destination,
             dry_run,
         }),
+        Some(PrimaryCommand::ImportPuttyHostKeys(source_path)) => {
+            Ok(Command::ImportPuttyHostKeys {
+                source_path,
+                known_hosts_path: import_destination,
+                dry_run,
+            })
+        }
         None => Err(format!("unsupported argument combination\n\n{USAGE}")),
     }
 }
@@ -313,6 +355,30 @@ fn import_known_hosts_file(
     Ok(())
 }
 
+fn import_putty_host_keys_file(
+    source_path: PathBuf,
+    known_hosts_path: Option<PathBuf>,
+    dry_run: bool,
+) -> Result<(), String> {
+    let destination_path = resolve_known_hosts_path(known_hosts_path)?;
+    let result = import_putty_host_keys(&source_path, &destination_path, dry_run)
+        .map_err(|error| error.to_string())?;
+    let mode = if dry_run { "dry-run" } else { "import" };
+    println!(
+        "RusTTY PuTTY host-key {mode}: source={}, destination={}, imported={}, already_present={}, skipped_blank_or_comment={}, skipped_outside_target={}, skipped_malformed={}, skipped_unsupported_key_type={}, skipped_total={}",
+        result.source_path.display(),
+        result.destination_path.display(),
+        result.imported,
+        result.already_present,
+        result.skipped_blank_or_comment,
+        result.skipped_outside_target,
+        result.skipped_malformed,
+        result.skipped_unsupported_key_type,
+        result.skipped_total(),
+    );
+    Ok(())
+}
+
 fn resolve_config_path(path: Option<PathBuf>) -> Result<PathBuf, String> {
     path.map_or_else(
         || default_config_path().map_err(|error| error.to_string()),
@@ -360,12 +426,12 @@ fn set_option_once<T>(slot: &mut Option<T>, value: T, message: &str) -> Result<(
 fn reject_import_only_flags(path: Option<PathBuf>, dry_run: bool) -> Result<(), String> {
     if path.is_some() {
         return Err(format!(
-            "--known-hosts requires --import-known-hosts\n\n{USAGE}"
+            "--known-hosts requires a host-key import command\n\n{USAGE}"
         ));
     }
     if dry_run {
         return Err(format!(
-            "--dry-run requires --import-known-hosts\n\n{USAGE}"
+            "--dry-run requires a host-key import command\n\n{USAGE}"
         ));
     }
     Ok(())
@@ -433,6 +499,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_import_putty_host_keys_with_destination_and_dry_run() {
+        assert_eq!(
+            parse_command([
+                "--import-putty-host-keys".to_owned(),
+                "/tmp/putty-hostkeys.reg".to_owned(),
+                "--known-hosts".to_owned(),
+                "/tmp/rustty-known_hosts".to_owned(),
+                "--dry-run".to_owned(),
+            ]),
+            Ok(Command::ImportPuttyHostKeys {
+                source_path: PathBuf::from("/tmp/putty-hostkeys.reg"),
+                known_hosts_path: Some(PathBuf::from("/tmp/rustty-known_hosts")),
+                dry_run: true,
+            })
+        );
+    }
+
+    #[test]
     fn rejects_known_hosts_without_import_command() {
         let error = parse_command([
             "--show-default-config-path".to_owned(),
@@ -441,7 +525,7 @@ mod tests {
         ])
         .expect_err("standalone known-hosts flag should fail");
 
-        assert!(error.contains("--known-hosts requires --import-known-hosts"));
+        assert!(error.contains("--known-hosts requires a host-key import command"));
     }
 
     #[test]

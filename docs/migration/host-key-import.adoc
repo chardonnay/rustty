@@ -1,21 +1,23 @@
 = Host-Key Import
 :toc:
 
-RusTTY can now import exact OpenSSH-style `known_hosts` entries into its own
-managed host-key store. This gives migrations a documented, auditable path
-instead of asking operators to copy files blindly.
+RusTTY can now import exact OpenSSH-style `known_hosts` entries and PuTTY host
+keys into its own managed host-key store. This gives migrations a documented,
+auditable path instead of asking operators to copy files blindly.
 
 == Migration Intent
 
 * Reuse exact host-key trust that already exists in OpenSSH-style
   `known_hosts` files.
+* Reuse PuTTY host-key trust from Windows registry exports or Unix
+  `sshhostkeys` files.
 * Normalize imported entries into the RusTTY-managed `known_hosts` location.
 * Report what was imported, what was already trusted, and what was skipped.
 * Avoid pretending that unsupported patterns were migrated when they were not.
 
 == Supported Input
 
-The current bootstrap import path accepts:
+The OpenSSH import path accepts:
 
 * exact host entries such as `example.com`
 * comma-separated exact aliases such as `example.com,alias.example.com`
@@ -24,6 +26,17 @@ The current bootstrap import path accepts:
 Each accepted pattern is re-written into RusTTY's canonical storage form, so
 default-port entries land as `host` and non-default-port entries land as
 `[host]:port`.
+
+The PuTTY import path accepts:
+
+* Windows `.reg` exports containing the
+  `HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\SshHostKeys` section
+* PuTTY Unix `sshhostkeys` files such as `~/.putty/sshhostkeys`
+* supported key types: `rsa2`, `dss`, `ecdsa-sha2-nistp256`,
+  `ecdsa-sha2-nistp384`, `ecdsa-sha2-nistp521`, and `ssh-ed25519`
+
+Windows `.reg` imports also decode PuTTY's escaped hostname storage, so hosts
+such as `.example.com` are restored correctly from `%2Eexample.com`.
 
 == Current Limits
 
@@ -35,10 +48,16 @@ The current import helper intentionally skips:
 * wildcard patterns
 * negated patterns
 * malformed or otherwise unsupported exact-pattern forms
+* PuTTY host-key records with unsupported key types such as `ssh-ed448`
+* Windows registry-export lines outside PuTTY's `SshHostKeys` section
 
-PuTTY registry host keys are not imported yet in this bootstrap slice. The
-current migration helper is specifically for OpenSSH-style `known_hosts`
-inputs.
+Current intentional limits:
+
+* live Windows registry reads are not part of this bootstrap path yet;
+  operators should import a `.reg` export instead
+* OpenSSH hashed-host migration still requires an explicit hostname match path,
+  not blind trust import
+* historical SSH-1-style PuTTY host keys are skipped
 
 == CLI Flow
 
@@ -62,6 +81,20 @@ rustty --import-known-hosts ~/.ssh/known_hosts --dry-run
 rustty --import-known-hosts ~/.ssh/known_hosts --known-hosts /tmp/rustty-known_hosts
 ----
 
+PuTTY Windows export:
+
+[source,text]
+----
+rustty --import-putty-host-keys ~/Downloads/putty-hostkeys.reg --dry-run
+----
+
+PuTTY Unix file:
+
+[source,text]
+----
+rustty --import-putty-host-keys ~/.putty/sshhostkeys
+----
+
 `--dry-run` reports the same import statistics without modifying the RusTTY
 destination file.
 
@@ -75,6 +108,8 @@ The bootstrap CLI prints a line-oriented summary with:
 * already-trusted exact patterns
 * skipped blank/comment lines
 * skipped marker, hashed, wildcard, negated, and unsupported patterns
+* skipped PuTTY records outside the target registry section
+* skipped malformed or unsupported PuTTY key records
 
 This makes migration reviews reproducible and easier to attach to release
 notes or support diagnostics.

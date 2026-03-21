@@ -30,8 +30,9 @@ configuration file for schema review and repository validation.
 It now also supports default-path discovery, sample-file initialization, and
 stored-config validation through a small bootstrap CLI.
 
-It also provides a bootstrap migration helper for importing exact OpenSSH-style
-host-key trust into RusTTY-managed `known_hosts` storage.
+It also provides bootstrap migration helpers for importing exact OpenSSH-style
+host-key trust and PuTTY host-key exports into RusTTY-managed `known_hosts`
+storage.
 
 == Configuration and Storage
 
@@ -42,9 +43,9 @@ The current sample config now demonstrates session-level SSH defaults such as
 stored usernames and password environment variable names, so future GUI editing
 work has a concrete schema target from the beginning.
 
-Host-key migration currently runs through `rustty --import-known-hosts`, which
-reads an OpenSSH-style source file and reports which exact trust entries were
-imported, already present, or skipped.
+Host-key migration currently runs through `rustty --import-known-hosts` for
+OpenSSH files and `rustty --import-putty-host-keys` for PuTTY exports. Both
+commands report what was imported, already present, or skipped.
 
 == Logging and Diagnostics
 
@@ -96,6 +97,11 @@ rustty --show-default-known-hosts-path
 [source,text]
 ----
 rustty --import-known-hosts ~/.ssh/known_hosts --dry-run
+----
+
+[source,text]
+----
+rustty --import-putty-host-keys ~/Downloads/putty-hostkeys.reg --dry-run
 ----
 
 == Current Limits

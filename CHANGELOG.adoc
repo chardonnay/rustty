@@ -151,8 +151,12 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added dry-run reporting and per-category skip counts so host-key migration
   remains reviewable when source files contain markers, hashed hosts,
   wildcards, or negations.
-* Added dedicated documentation for the current migration boundary: OpenSSH-
-  style host-key import now, PuTTY-registry host-key import later.
+* Added PuTTY host-key import from Windows `.reg` exports and Unix
+  `sshhostkeys` files, including UTF-16 registry-export decoding and
+  explicit skip reporting for unsupported key types.
+* Updated the migration documentation to describe the current host-key import
+  boundary: OpenSSH `known_hosts` plus file-based PuTTY exports, but not live
+  Windows registry reads.
 
 === Repository bootstrap
 

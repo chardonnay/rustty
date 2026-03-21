@@ -97,7 +97,8 @@ branches can continue to work through the same queue without losing context.
 
 * PuTTY session import coverage
 * host-key import and compatibility helpers (`in_progress`)
-  Current bootstrap scope: exact OpenSSH-style `known_hosts` import via `rustty`.
+  Current bootstrap scope: exact OpenSSH-style `known_hosts` import plus
+  PuTTY `.reg` export and `sshhostkeys` import via `rustty`.
 * OpenSSH config import improvements
 
 [#roadmap-release-hardening]

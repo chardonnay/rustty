@@ -14,6 +14,10 @@
   OpenSSH-style host-key entries into RusTTY-managed storage, including
   dry-run reporting for migration review.
   xref:../changelogs/rustty.adoc#rustty-hostkey-import[Changelog entry]
+* `rustty` can now also import PuTTY Windows registry exports and Unix
+  `sshhostkeys` files into RusTTY-managed host-key storage, with UTF-16
+  registry-export decoding and explicit skip reporting for unsupported keys.
+  xref:../changelogs/rustty.adoc#rustty-hostkey-import[Changelog entry]
 * The RusTTY config layer now includes default-path resolution and validated
   file persistence helpers.
   xref:../../CHANGELOG.adoc#suite-config-cli[Changelog entry]

@@ -10,6 +10,9 @@
 * Added `--import-known-hosts SOURCE [--known-hosts PATH] [--dry-run]` so
   exact OpenSSH-style `known_hosts` entries can be migrated into RusTTY
   storage with an explicit summary of imported and skipped patterns.
+* Added `--import-putty-host-keys SOURCE [--known-hosts PATH] [--dry-run]`
+  so PuTTY Windows registry exports and Unix `sshhostkeys` files can be
+  migrated into RusTTY storage with explicit skip reporting.
 * Added dedicated migration documentation for host-key import boundaries and
   current compatibility limits.
 

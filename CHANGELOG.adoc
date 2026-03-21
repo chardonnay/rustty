@@ -23,6 +23,16 @@ This file tracks suite-level milestones. Tool-specific details live under
 * Added a launcher-side SSH command runner for saved SSH sessions, including
   GUI host-key confirmation and captured command output.
 
+[#suite-rustty-terminal-window]
+=== rustty terminal window
+
+* Added the first dedicated saved-session terminal window to `rustty`.
+* Moved SSH command execution history, host-key prompts, and captured output
+  into that session window so the launcher can stay focused on browsing and
+  selection.
+* Added a transcript-style presentation for queued commands, stdout, stderr,
+  warnings, and completion summaries inside the GUI.
+
 [#suite-config-foundation]
 === Configuration foundation
 

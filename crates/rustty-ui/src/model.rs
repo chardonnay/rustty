@@ -257,6 +257,146 @@ enum CommandRunnerEvent {
     Failed(String),
 }
 
+/// Visual tone for a transcript entry inside the first RusTTY terminal window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TerminalTranscriptTone {
+    /// A command prompt or operator action.
+    Prompt,
+    /// Neutral informational output.
+    Info,
+    /// Successful completion or positive status.
+    Success,
+    /// A warning that still leaves the window usable.
+    Warning,
+    /// An execution or validation error.
+    Error,
+    /// Captured standard output.
+    Stdout,
+    /// Captured standard error.
+    Stderr,
+}
+
+/// A rendered transcript item for the first GUI-side terminal window.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalTranscriptEntry {
+    /// Visual tone for the entry.
+    pub tone: TerminalTranscriptTone,
+    /// Short heading shown above the transcript body.
+    pub title: String,
+    /// Multiline body content rendered in a terminal-style surface.
+    pub body: String,
+}
+
+/// Snapshot of the current terminal-window state for egui rendering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalWindowSnapshot {
+    /// Saved session name currently bound to the window.
+    pub session_name: String,
+    /// Saved session protocol.
+    pub protocol: Protocol,
+    /// Human-readable endpoint summary.
+    pub endpoint: String,
+    /// Whether the terminal window should currently be visible.
+    pub visible: bool,
+    /// Editable remote command text shown in the window.
+    pub command_input: String,
+    /// CLI-oriented launch preview for the bound session.
+    pub launch_preview: String,
+    /// CLI-oriented preview for the current remote command.
+    pub command_preview: String,
+    /// Transcript entries captured in the window.
+    pub transcript: Vec<TerminalTranscriptEntry>,
+    /// Current background command-runner state for the window.
+    pub command_runner_state: CommandRunnerState,
+}
+
+#[derive(Debug)]
+struct TerminalWindowState {
+    session_name: String,
+    protocol: Protocol,
+    endpoint: String,
+    visible: bool,
+    command_input: String,
+    transcript: Vec<TerminalTranscriptEntry>,
+    command_runner_state: CommandRunnerState,
+    command_runner_receiver: Option<Receiver<CommandRunnerEvent>>,
+    pending_host_key_execution: Option<PendingHostKeyExecution>,
+}
+
+impl TerminalWindowState {
+    fn new(stored_session: &StoredSession) -> Self {
+        let session = &stored_session.session;
+        let mut state = Self {
+            session_name: session.name.clone(),
+            protocol: session.protocol,
+            endpoint: session_endpoint_summary(stored_session),
+            visible: true,
+            command_input: String::new(),
+            transcript: Vec::new(),
+            command_runner_state: CommandRunnerState::Idle,
+            command_runner_receiver: None,
+            pending_host_key_execution: None,
+        };
+
+        state.push_transcript(
+            TerminalTranscriptTone::Info,
+            "Session workspace ready",
+            format!(
+                "Opened a dedicated RusTTY session window for '{}'. Interactive terminal emulation is still the next milestone, but this window already keeps saved-session command history and host-key decisions separate from the launcher.",
+                session.name
+            ),
+        );
+
+        state
+    }
+
+    fn snapshot(&self, launch_preview: String, command_preview: String) -> TerminalWindowSnapshot {
+        TerminalWindowSnapshot {
+            session_name: self.session_name.clone(),
+            protocol: self.protocol,
+            endpoint: self.endpoint.clone(),
+            visible: self.visible,
+            command_input: self.command_input.clone(),
+            launch_preview,
+            command_preview,
+            transcript: self.transcript.clone(),
+            command_runner_state: self.command_runner_state.clone(),
+        }
+    }
+
+    fn has_active_command_task(&self) -> bool {
+        self.command_runner_receiver.is_some()
+            || matches!(
+                self.command_runner_state,
+                CommandRunnerState::ProbingHostKey(_) | CommandRunnerState::Running(_)
+            )
+    }
+
+    fn command_runner_state_code(&self) -> &'static str {
+        match self.command_runner_state {
+            CommandRunnerState::Idle => "idle",
+            CommandRunnerState::ProbingHostKey(_) => "probing_host_key",
+            CommandRunnerState::AwaitingHostKeyConfirmation(_) => "awaiting_host_key_confirmation",
+            CommandRunnerState::Running(_) => "running",
+            CommandRunnerState::Finished(_) => "finished",
+            CommandRunnerState::Failed(_) => "failed",
+        }
+    }
+
+    fn push_transcript(
+        &mut self,
+        tone: TerminalTranscriptTone,
+        title: impl Into<String>,
+        body: impl Into<String>,
+    ) {
+        self.transcript.push(TerminalTranscriptEntry {
+            tone,
+            title: title.into(),
+            body: body.into(),
+        });
+    }
+}
+
 /// Pure state backing the RusTTY launcher window.
 #[derive(Debug)]
 pub struct LauncherModel {
@@ -267,10 +407,7 @@ pub struct LauncherModel {
     quick_connect: QuickConnectDraft,
     status_message: String,
     config_state: ConfigLoadState,
-    session_command: String,
-    command_runner_state: CommandRunnerState,
-    command_runner_receiver: Option<Receiver<CommandRunnerEvent>>,
-    pending_host_key_execution: Option<PendingHostKeyExecution>,
+    terminal_window: Option<TerminalWindowState>,
 }
 
 impl LauncherModel {
@@ -286,10 +423,7 @@ impl LauncherModel {
             quick_connect: QuickConnectDraft::default(),
             status_message: String::new(),
             config_state,
-            session_command: String::new(),
-            command_runner_state: CommandRunnerState::Idle,
-            command_runner_receiver: None,
-            pending_host_key_execution: None,
+            terminal_window: None,
         };
         model.ensure_selection();
         model.status_message = model.default_status_message();
@@ -333,17 +467,6 @@ impl LauncherModel {
     #[must_use]
     pub const fn quick_connect(&self) -> &QuickConnectDraft {
         &self.quick_connect
-    }
-
-    /// Returns the editable remote command for the selected-session runner.
-    pub fn session_command_mut(&mut self) -> &mut String {
-        &mut self.session_command
-    }
-
-    /// Returns the current selected-session remote command.
-    #[must_use]
-    pub fn session_command(&self) -> &str {
-        &self.session_command
     }
 
     /// Returns the current status message shown in the GUI footer.
@@ -480,12 +603,6 @@ impl LauncherModel {
         }
 
         self.selected_session_name = Some(name.to_owned());
-        self.session_command.clear();
-        if !self.has_active_command_task() {
-            self.command_runner_state = CommandRunnerState::Idle;
-            self.pending_host_key_execution = None;
-            self.command_runner_receiver = None;
-        }
     }
 
     /// Copies the selected session details into the quick-connect draft.
@@ -501,32 +618,202 @@ impl LauncherModel {
         true
     }
 
-    /// Starts a background SSH command run for the selected saved session.
-    pub fn start_selected_session_command_run(&mut self) -> Result<(), String> {
-        if self.has_active_command_task() {
-            return Err("A launcher-side SSH command is already running".to_owned());
-        }
-
+    /// Opens or focuses the dedicated terminal window for the selected session.
+    pub fn open_selected_session_terminal_window(&mut self) -> Result<(), String> {
         let Some(selected_session) = self.selected_session() else {
-            return Err("Select a saved SSH session before starting a command".to_owned());
+            return Err("Select a saved session before opening the terminal window".to_owned());
         };
-        let command = self.session_command.trim();
-        if command.is_empty() {
-            return Err("Enter a remote command before starting the runner".to_owned());
+
+        match &mut self.terminal_window {
+            Some(terminal_window)
+                if terminal_window.session_name == selected_session.session.name =>
+            {
+                terminal_window.visible = true;
+                self.status_message = format!(
+                    "Showing terminal window for '{}'",
+                    selected_session.session.name
+                );
+                Ok(())
+            }
+            Some(terminal_window) if terminal_window.has_active_command_task() => Err(format!(
+                "Terminal window '{}' is still busy; reopen that session first or wait for the background task to finish",
+                terminal_window.session_name
+            )),
+            Some(_) | None => {
+                let session_name = selected_session.session.name.clone();
+                self.terminal_window = Some(TerminalWindowState::new(&selected_session));
+                self.status_message = format!("Opened terminal window for '{session_name}'");
+                Ok(())
+            }
+        }
+    }
+
+    /// Makes a hidden terminal window visible again.
+    pub fn show_terminal_window(&mut self) -> bool {
+        let Some(terminal_window) = &mut self.terminal_window else {
+            return false;
+        };
+
+        if terminal_window.visible {
+            return false;
         }
 
-        match prepare_command_execution(&selected_session, command, &self.options.known_hosts_path)?
+        terminal_window.visible = true;
+        self.status_message = format!(
+            "Showing terminal window for '{}'",
+            terminal_window.session_name
+        );
+        true
+    }
+
+    /// Returns whether a terminal window exists but is currently hidden.
+    #[must_use]
+    pub fn has_hidden_terminal_window(&self) -> bool {
+        self.terminal_window
+            .as_ref()
+            .is_some_and(|terminal_window| !terminal_window.visible)
+    }
+
+    /// Closes or hides the current terminal window.
+    pub fn close_terminal_window(&mut self) {
+        let Some(terminal_window) = &mut self.terminal_window else {
+            return;
+        };
+
+        if terminal_window.has_active_command_task()
+            || matches!(
+                terminal_window.command_runner_state,
+                CommandRunnerState::AwaitingHostKeyConfirmation(_)
+            )
         {
+            terminal_window.visible = false;
+            self.status_message = format!(
+                "Hid terminal window for '{}' while background work continues",
+                terminal_window.session_name
+            );
+            return;
+        }
+
+        let session_name = terminal_window.session_name.clone();
+        self.terminal_window = None;
+        self.status_message = format!("Closed terminal window for '{session_name}'");
+    }
+
+    /// Returns a snapshot of the terminal window for rendering.
+    #[must_use]
+    pub fn terminal_window_snapshot(&self) -> Option<TerminalWindowSnapshot> {
+        let terminal_window = self.terminal_window.as_ref()?;
+        let stored_session = self.terminal_window_session();
+        let launch_preview = stored_session
+            .as_ref()
+            .map(session_launch_preview)
+            .unwrap_or_else(|| {
+                format!(
+                    "Saved session '{}' is no longer present in the current RusTTY config.",
+                    terminal_window.session_name
+                )
+            });
+        let command_preview = stored_session
+            .as_ref()
+            .map(|stored_session| {
+                session_command_preview(stored_session, terminal_window.command_input.as_str())
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "Saved session '{}' is no longer present in the current RusTTY config.",
+                    terminal_window.session_name
+                )
+            });
+
+        Some(terminal_window.snapshot(launch_preview, command_preview))
+    }
+
+    /// Returns mutable access to the current terminal-window command input.
+    pub fn terminal_window_command_mut(&mut self) -> Option<&mut String> {
+        self.terminal_window
+            .as_mut()
+            .map(|terminal_window| &mut terminal_window.command_input)
+    }
+
+    /// Starts a background SSH command run for the current terminal window.
+    pub fn start_terminal_window_command_run(&mut self) -> Result<(), String> {
+        let (session_name, command) = {
+            let terminal_window = self.terminal_window.as_ref().ok_or_else(|| {
+                "Open a terminal window for a saved session before starting a command".to_owned()
+            })?;
+            if terminal_window.has_active_command_task() {
+                return Err("A terminal-window SSH command is already running".to_owned());
+            }
+
+            let command = terminal_window.command_input.trim();
+            if command.is_empty() {
+                return Err("Enter a remote command before starting the terminal runner".to_owned());
+            }
+
+            (terminal_window.session_name.clone(), command.to_owned())
+        };
+
+        let selected_session = self
+            .config()
+            .and_then(|config| config.find_session(&session_name).cloned())
+            .ok_or_else(|| {
+                format!(
+                    "Saved session '{}' is no longer present in the current RusTTY config",
+                    session_name
+                )
+            })?;
+
+        if let Some(terminal_window) = &mut self.terminal_window {
+            terminal_window.visible = true;
+            terminal_window.push_transcript(
+                TerminalTranscriptTone::Prompt,
+                format!("$ {command}"),
+                format!(
+                    "Queued a saved-session {} command for '{}' through the RusTTY terminal window.",
+                    selected_session.session.protocol.label(),
+                    selected_session.session.name
+                ),
+            );
+        }
+
+        match prepare_command_execution(
+            &selected_session,
+            &command,
+            &self.options.known_hosts_path,
+        )? {
             CommandPreparation::Ready(prepared_execution) => {
+                if let Some(terminal_window) = &mut self.terminal_window {
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Info,
+                        "Connecting",
+                        format!(
+                            "Starting SSH command on {}:{} for '{}'.",
+                            prepared_execution.spec.host,
+                            prepared_execution.spec.port,
+                            prepared_execution.spec.progress.session_name
+                        ),
+                    );
+                }
                 self.status_message = format!(
-                    "Starting launcher-side SSH command for '{}'",
+                    "Starting terminal-window SSH command for '{}'",
                     prepared_execution.spec.progress.session_name
                 );
                 self.start_command_execution(prepared_execution);
             }
             CommandPreparation::RequiresHostKeyProbe(command_execution_spec) => {
                 let progress = command_execution_spec.progress.clone();
-                self.command_runner_state = CommandRunnerState::ProbingHostKey(progress.clone());
+                if let Some(terminal_window) = &mut self.terminal_window {
+                    terminal_window.command_runner_state =
+                        CommandRunnerState::ProbingHostKey(progress.clone());
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Info,
+                        "Probing host key",
+                        format!(
+                            "Checking the SSH host key for {}:{} before credentials are sent.",
+                            progress.host, progress.port
+                        ),
+                    );
+                }
                 self.status_message =
                     format!("Probing server host key for '{}'", progress.session_name);
                 self.start_host_key_probe(command_execution_spec);
@@ -538,7 +825,10 @@ impl LauncherModel {
 
     /// Polls background SSH command activity and updates the launcher state.
     pub fn poll_command_runner(&mut self) {
-        let Some(receiver) = &self.command_runner_receiver else {
+        let Some(terminal_window) = &self.terminal_window else {
+            return;
+        };
+        let Some(receiver) = &terminal_window.command_runner_receiver else {
             return;
         };
 
@@ -547,34 +837,97 @@ impl LauncherModel {
                 pending_execution,
                 prompt,
             }) => {
-                self.command_runner_receiver = None;
-                self.pending_host_key_execution = Some(*pending_execution);
-                self.command_runner_state =
+                let Some(terminal_window) = &mut self.terminal_window else {
+                    return;
+                };
+                terminal_window.command_runner_receiver = None;
+                terminal_window.pending_host_key_execution = Some(*pending_execution);
+                terminal_window.command_runner_state =
                     CommandRunnerState::AwaitingHostKeyConfirmation(prompt.clone());
+                terminal_window.push_transcript(
+                    TerminalTranscriptTone::Warning,
+                    "Host-key confirmation required",
+                    format!(
+                        "RusTTY reached {}:{} for '{}' and needs trust confirmation before credentials are sent. Fingerprint: {}.",
+                        prompt.host, prompt.port, prompt.session_name, prompt.fingerprint
+                    ),
+                );
                 self.status_message = format!("Confirm the host key for '{}'", prompt.session_name);
             }
             Ok(CommandRunnerEvent::Finished(report)) => {
-                self.command_runner_receiver = None;
-                self.pending_host_key_execution = None;
-                self.command_runner_state = CommandRunnerState::Finished(report.clone());
+                let Some(terminal_window) = &mut self.terminal_window else {
+                    return;
+                };
+                terminal_window.command_runner_receiver = None;
+                terminal_window.pending_host_key_execution = None;
+                terminal_window.command_runner_state = CommandRunnerState::Finished(report.clone());
+                terminal_window.push_transcript(
+                    TerminalTranscriptTone::Success,
+                    format!("Exit status {}", report.exit_status),
+                    format!(
+                        "Command finished for '{}' on {}:{}.\nHost key: {} ({})",
+                        report.session_name,
+                        report.host,
+                        report.port,
+                        report.host_key_fingerprint,
+                        report.host_key_source
+                    ),
+                );
+                if !report.stdout.is_empty() {
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Stdout,
+                        "stdout",
+                        report.stdout.clone(),
+                    );
+                }
+                if !report.stderr.is_empty() {
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Stderr,
+                        "stderr",
+                        report.stderr.clone(),
+                    );
+                }
+                if let Some(warning) = &report.warning {
+                    terminal_window.push_transcript(
+                        TerminalTranscriptTone::Warning,
+                        "Post-run warning",
+                        warning.clone(),
+                    );
+                }
                 self.status_message = format!(
-                    "Launcher command for '{}' finished with exit status {}",
+                    "Terminal command for '{}' finished with exit status {}",
                     report.session_name, report.exit_status
                 );
             }
             Ok(CommandRunnerEvent::Failed(error)) => {
-                self.command_runner_receiver = None;
-                self.pending_host_key_execution = None;
-                self.command_runner_state = CommandRunnerState::Failed(error.clone());
+                let Some(terminal_window) = &mut self.terminal_window else {
+                    return;
+                };
+                terminal_window.command_runner_receiver = None;
+                terminal_window.pending_host_key_execution = None;
+                terminal_window.command_runner_state = CommandRunnerState::Failed(error.clone());
+                terminal_window.push_transcript(
+                    TerminalTranscriptTone::Error,
+                    "Command failed",
+                    error.clone(),
+                );
                 self.status_message = error;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
-                self.command_runner_receiver = None;
-                self.pending_host_key_execution = None;
-                self.command_runner_state = CommandRunnerState::Failed(
-                    "Launcher background task ended unexpectedly".to_owned(),
+                let Some(terminal_window) = &mut self.terminal_window else {
+                    return;
+                };
+                terminal_window.command_runner_receiver = None;
+                terminal_window.pending_host_key_execution = None;
+                let error = "Terminal background task ended unexpectedly".to_owned();
+                terminal_window.command_runner_state = CommandRunnerState::Failed(error.clone());
+                terminal_window.push_transcript(
+                    TerminalTranscriptTone::Error,
+                    "Background task ended unexpectedly",
+                    error.clone(),
                 );
+                self.status_message = error;
             }
         }
     }
@@ -582,27 +935,9 @@ impl LauncherModel {
     /// Returns whether the launcher currently has an active background task.
     #[must_use]
     pub fn has_active_command_task(&self) -> bool {
-        self.command_runner_receiver.is_some()
-            || matches!(
-                self.command_runner_state,
-                CommandRunnerState::ProbingHostKey(_) | CommandRunnerState::Running(_)
-            )
-    }
-
-    /// Returns the current command-runner state.
-    #[must_use]
-    pub fn command_runner_state(&self) -> &CommandRunnerState {
-        &self.command_runner_state
-    }
-
-    /// Returns a CLI-oriented preview for the selected-session command runner.
-    #[must_use]
-    pub fn selected_session_command_preview(&self) -> Option<String> {
-        let stored_session = self.selected_session()?;
-        Some(session_command_preview(
-            &stored_session,
-            self.session_command.as_str(),
-        ))
+        self.terminal_window
+            .as_ref()
+            .is_some_and(TerminalWindowState::has_active_command_task)
     }
 
     /// Trusts a pending probed host key for a single run.
@@ -617,22 +952,37 @@ impl LauncherModel {
 
     /// Cancels the current pending host-key confirmation.
     pub fn cancel_pending_host_key(&mut self) {
-        if let CommandRunnerState::AwaitingHostKeyConfirmation(prompt) = &self.command_runner_state
+        let Some(terminal_window) = &mut self.terminal_window else {
+            return;
+        };
+        if let CommandRunnerState::AwaitingHostKeyConfirmation(prompt) =
+            &terminal_window.command_runner_state
         {
             self.status_message = format!(
                 "Cancelled host-key confirmation for '{}'",
                 prompt.session_name
             );
+            terminal_window.push_transcript(
+                TerminalTranscriptTone::Warning,
+                "Host key rejected",
+                format!(
+                    "Cancelled the host-key prompt for '{}' at {}:{}.",
+                    prompt.session_name, prompt.host, prompt.port
+                ),
+            );
         }
-        self.pending_host_key_execution = None;
-        self.command_runner_state = CommandRunnerState::Idle;
+        terminal_window.pending_host_key_execution = None;
+        terminal_window.command_runner_state = CommandRunnerState::Idle;
     }
 
     /// Clears the current command-runner result or error.
     pub fn clear_command_runner_state(&mut self) {
-        self.pending_host_key_execution = None;
-        if !self.has_active_command_task() {
-            self.command_runner_state = CommandRunnerState::Idle;
+        let Some(terminal_window) = &mut self.terminal_window else {
+            return;
+        };
+        terminal_window.pending_host_key_execution = None;
+        if !terminal_window.has_active_command_task() {
+            terminal_window.command_runner_state = CommandRunnerState::Idle;
         }
     }
 
@@ -654,6 +1004,19 @@ impl LauncherModel {
             format!("selected_session={selected_session}"),
             format!("saved_sessions={}", self.session_count()),
             format!("imported_sessions={}", self.imported_session_count()),
+            format!(
+                "terminal_window_session={}",
+                self.terminal_window
+                    .as_ref()
+                    .map(|terminal_window| terminal_window.session_name.clone())
+                    .unwrap_or_else(|| "none".to_owned())
+            ),
+            format!(
+                "terminal_window_visible={}",
+                self.terminal_window
+                    .as_ref()
+                    .is_some_and(|terminal_window| terminal_window.visible)
+            ),
             format!("command_runner_state={}", self.command_runner_state_code()),
             format!("suite_changelog={SUITE_CHANGELOG_PATH}"),
             format!("release_notes={NEXT_RELEASE_NOTES_PATH}"),
@@ -713,20 +1076,23 @@ impl LauncherModel {
     }
 
     fn command_runner_state_code(&self) -> &'static str {
-        match self.command_runner_state {
-            CommandRunnerState::Idle => "idle",
-            CommandRunnerState::ProbingHostKey(_) => "probing_host_key",
-            CommandRunnerState::AwaitingHostKeyConfirmation(_) => "awaiting_host_key_confirmation",
-            CommandRunnerState::Running(_) => "running",
-            CommandRunnerState::Finished(_) => "finished",
-            CommandRunnerState::Failed(_) => "failed",
-        }
+        self.terminal_window
+            .as_ref()
+            .map_or("none", TerminalWindowState::command_runner_state_code)
     }
 
     fn resume_pending_host_key_execution(&mut self, persist_host_key: bool) -> Result<(), String> {
-        let Some(pending_execution) = self.pending_host_key_execution.take() else {
+        let terminal_window = self
+            .terminal_window
+            .as_mut()
+            .ok_or_else(|| "No terminal window is currently open".to_owned())?;
+        let Some(pending_execution) = terminal_window.pending_host_key_execution.take() else {
             return Err("No host-key confirmation is currently pending".to_owned());
         };
+        let session_name = pending_execution.spec.progress.session_name.clone();
+        let host = pending_execution.spec.host.clone();
+        let port = pending_execution.spec.port;
+        let fingerprint = host_key_fingerprint(&pending_execution.verified_host_key.public_key);
 
         let prepared_execution = PreparedCommandExecution {
             spec: pending_execution.spec,
@@ -736,6 +1102,18 @@ impl LauncherModel {
             persist_host_key_on_success: persist_host_key,
         };
 
+        terminal_window.push_transcript(
+            TerminalTranscriptTone::Info,
+            if persist_host_key {
+                "Host key trusted and queued for save"
+            } else {
+                "Host key trusted for this run"
+            },
+            format!(
+                "Accepted host key {fingerprint} for '{}' at {}:{}.",
+                session_name, host, port
+            ),
+        );
         self.status_message = if persist_host_key {
             format!(
                 "Trusted host key for '{}' and queued persistence after a successful run",
@@ -755,7 +1133,9 @@ impl LauncherModel {
         let (sender, receiver) = mpsc::channel();
         let progress = command_execution_spec.progress.clone();
         let known_hosts_path = command_execution_spec.known_hosts_path.clone();
-        self.command_runner_receiver = Some(receiver);
+        if let Some(terminal_window) = &mut self.terminal_window {
+            terminal_window.command_runner_receiver = Some(receiver);
+        }
 
         thread::spawn(move || {
             let event = match probe_ssh_host_key(
@@ -791,9 +1171,11 @@ impl LauncherModel {
     fn start_command_execution(&mut self, prepared_execution: PreparedCommandExecution) {
         let (sender, receiver) = mpsc::channel();
         let progress = prepared_execution.spec.progress.clone();
-        self.command_runner_state = CommandRunnerState::Running(progress.clone());
-        self.command_runner_receiver = Some(receiver);
-        self.pending_host_key_execution = None;
+        if let Some(terminal_window) = &mut self.terminal_window {
+            terminal_window.command_runner_state = CommandRunnerState::Running(progress.clone());
+            terminal_window.command_runner_receiver = Some(receiver);
+            terminal_window.pending_host_key_execution = None;
+        }
 
         thread::spawn(move || {
             let request = prepared_execution.build_request();
@@ -846,6 +1228,13 @@ impl LauncherModel {
 
             let _ = sender.send(event);
         });
+    }
+
+    fn terminal_window_session(&self) -> Option<StoredSession> {
+        let terminal_window = self.terminal_window.as_ref()?;
+        self.config()?
+            .find_session(&terminal_window.session_name)
+            .cloned()
     }
 }
 
@@ -1177,6 +1566,15 @@ fn session_matches_filter(stored_session: &StoredSession, filter: &str) -> bool 
             .is_some_and(|notes| notes.to_ascii_lowercase().contains(filter))
 }
 
+fn session_endpoint_summary(stored_session: &StoredSession) -> String {
+    let session = &stored_session.session;
+    match (session.host.as_deref(), session.effective_port()) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.to_owned(),
+        (None, _) => "No host configured".to_owned(),
+    }
+}
+
 fn normalized_port(port: &str) -> Option<&str> {
     let trimmed = port.trim();
     (!trimmed.is_empty()).then_some(trimmed)
@@ -1294,23 +1692,59 @@ mod tests {
     }
 
     #[test]
-    fn command_runner_requires_non_empty_remote_command() {
+    fn terminal_window_stays_bound_to_the_opened_session() {
+        let workspace = temporary_workspace();
+        let config_path = workspace.join("config.toml");
+        let known_hosts_path = workspace.join("known_hosts");
+        let mut config = AppConfig::empty();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("prod-ssh", Protocol::Ssh)
+                .with_host("prod.example")
+                .with_username("ops"),
+        ));
+        config.add_session(StoredSession::new(
+            SessionConfig::new("lab-ssh", Protocol::Ssh)
+                .with_host("lab.example")
+                .with_username("ops"),
+        ));
+        save_config(&config_path, &config).expect("config should save");
+
+        let mut model = LauncherModel::load(LauncherOptions::new(config_path, known_hosts_path));
+        model
+            .open_selected_session_terminal_window()
+            .expect("selected session should open a terminal window");
+        model.select_session("lab-ssh");
+
+        let snapshot = model
+            .terminal_window_snapshot()
+            .expect("terminal window snapshot should be present");
+        assert_eq!(snapshot.session_name, "prod-ssh");
+    }
+
+    #[test]
+    fn terminal_window_command_runner_requires_non_empty_remote_command() {
         let workspace = temporary_workspace();
         let config_path = workspace.join("config.toml");
         let known_hosts_path = workspace.join("known_hosts");
         save_config(&config_path, &AppConfig::sample()).expect("config should save");
 
         let mut model = LauncherModel::load(LauncherOptions::new(config_path, known_hosts_path));
+        model
+            .open_selected_session_terminal_window()
+            .expect("sample SSH session should open a terminal window");
         let error = model
-            .start_selected_session_command_run()
+            .start_terminal_window_command_run()
             .expect_err("empty command should be rejected");
 
         assert!(error.contains("Enter a remote command"));
-        assert_eq!(model.command_runner_state(), &CommandRunnerState::Idle);
+        let snapshot = model
+            .terminal_window_snapshot()
+            .expect("terminal window snapshot should be present");
+        assert_eq!(snapshot.command_runner_state, CommandRunnerState::Idle);
     }
 
     #[test]
-    fn command_runner_rejects_non_ssh_saved_sessions_before_runtime_work() {
+    fn terminal_window_command_runner_rejects_non_ssh_saved_sessions_before_runtime_work() {
         let workspace = temporary_workspace();
         let config_path = workspace.join("config.toml");
         let known_hosts_path = workspace.join("known_hosts");
@@ -1321,13 +1755,22 @@ mod tests {
         save_config(&config_path, &config).expect("config should save");
 
         let mut model = LauncherModel::load(LauncherOptions::new(config_path, known_hosts_path));
-        model.session_command_mut().push_str("help");
+        model
+            .open_selected_session_terminal_window()
+            .expect("selected session should open a terminal window");
+        model
+            .terminal_window_command_mut()
+            .expect("terminal window should expose its command input")
+            .push_str("help");
         let error = model
-            .start_selected_session_command_run()
+            .start_terminal_window_command_run()
             .expect_err("non-SSH sessions should be rejected");
 
         assert!(error.contains("supports SSH sessions only"));
-        assert_eq!(model.command_runner_state(), &CommandRunnerState::Idle);
+        let snapshot = model
+            .terminal_window_snapshot()
+            .expect("terminal window snapshot should be present");
+        assert_eq!(snapshot.command_runner_state, CommandRunnerState::Idle);
     }
 
     fn temporary_workspace() -> PathBuf {

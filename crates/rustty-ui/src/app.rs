@@ -13,8 +13,9 @@ use rustty_config::StoredSession;
 use rustty_core::{ALL_TOOLS, PRODUCT_NAME, Protocol};
 
 use crate::model::{
-    CommandRunnerState, LauncherModel, LauncherOptions, LauncherView, host_key_policy_label,
-    import_source_label, session_launch_preview, storage_format_label,
+    CommandRunnerState, LauncherModel, LauncherOptions, LauncherView, TerminalTranscriptEntry,
+    TerminalTranscriptTone, TerminalWindowSnapshot, host_key_policy_label, import_source_label,
+    session_launch_preview, storage_format_label,
 };
 
 /// Runs the native RusTTY launcher window.
@@ -66,6 +67,12 @@ impl RusttyApp {
                 if let Err(error) = self.model.initialize_sample_config() {
                     self.model.set_status_message(error);
                 }
+            }
+
+            if self.model.has_hidden_terminal_window()
+                && ui.button("Show terminal window").clicked()
+            {
+                let _ = self.model.show_terminal_window();
             }
 
             if ui.button("Copy config path").clicked() {
@@ -337,207 +344,71 @@ impl RusttyApp {
             code_block(ui, &launch_preview);
 
             ui.add_space(12.0);
-            self.render_session_command_runner(ui, stored_session);
+            self.render_session_terminal_launcher(ui, stored_session);
         });
     }
 
-    fn render_session_command_runner(&mut self, ui: &mut egui::Ui, stored_session: &StoredSession) {
-        ui.label(RichText::new("SSH command runner").strong());
+    fn render_session_terminal_launcher(
+        &mut self,
+        ui: &mut egui::Ui,
+        stored_session: &StoredSession,
+    ) {
+        ui.label(RichText::new("Terminal window").strong());
         ui.add_space(6.0);
-
-        if stored_session.session.protocol != Protocol::Ssh {
-            ui.label(
-                RichText::new(
-                    "Launcher-side command execution is currently available for SSH sessions only.",
-                )
-                .italics()
-                .color(Color32::from_rgb(118, 92, 78)),
-            );
-            return;
-        }
 
         ui.label(
             RichText::new(
-                "Run a non-interactive remote command from the launcher using the saved SSH auth defaults for this session.",
+                "Open a dedicated session window for this saved session. SSH sessions can already run non-interactive commands there with transcript history and GUI-side host-key confirmation.",
             )
             .color(Color32::from_rgb(102, 77, 64)),
         );
 
-        Grid::new("rustty-session-command-runner-grid")
-            .num_columns(2)
-            .spacing(Vec2::new(16.0, 8.0))
-            .show(ui, |ui| {
-                ui.label("Remote command");
-                ui.text_edit_singleline(self.model.session_command_mut());
-                ui.end_row();
-            });
-
-        let preview = self
-            .model
-            .selected_session_command_preview()
-            .unwrap_or_else(|| "Select a saved SSH session first.".to_owned());
-
         ui.add_space(8.0);
+        let terminal_snapshot = self.model.terminal_window_snapshot();
+        let is_current_terminal = terminal_snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.session_name == stored_session.session.name);
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Run command").clicked() {
-                if let Err(error) = self.model.start_selected_session_command_run() {
+            let button_label = if is_current_terminal {
+                "Show terminal window"
+            } else {
+                "Open terminal window"
+            };
+            if ui.button(button_label).clicked() {
+                if let Err(error) = self.model.open_selected_session_terminal_window() {
                     self.model.set_status_message(error);
                 }
             }
-            if ui.button("Copy command preview").clicked() {
-                copy_text(
-                    ui.ctx(),
-                    preview.clone(),
-                    &mut self.model,
-                    format!(
-                        "Copied launcher command preview for '{}'",
-                        stored_session.session.name
-                    ),
+            if stored_session.session.protocol != Protocol::Ssh {
+                ui.label(
+                    RichText::new(
+                        "Interactive GUI transport for this protocol is still queued after the first SSH-backed terminal window milestone.",
+                    )
+                    .italics()
+                    .color(Color32::from_rgb(118, 92, 78)),
                 );
             }
         });
 
-        ui.add_space(8.0);
-        code_block(ui, &preview);
-        ui.add_space(10.0);
-
-        let command_runner_state = self.model.command_runner_state().clone();
-        match command_runner_state {
-            CommandRunnerState::Idle => {
+        if let Some(snapshot) = terminal_snapshot
+            .filter(|snapshot| snapshot.session_name == stored_session.session.name)
+        {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(format!(
+                    "Current window state: {}",
+                    terminal_state_label(&snapshot.command_runner_state)
+                ))
+                .color(Color32::from_rgb(108, 79, 64)),
+            );
+            if !snapshot.visible {
                 ui.label(
                     RichText::new(
-                        "No launcher-side SSH command has been started for the current selection yet.",
+                        "The terminal window is currently hidden. Reopen it to continue with host-key prompts or review the transcript.",
                     )
                     .italics()
-                    .color(Color32::from_rgb(112, 85, 70)),
+                    .color(Color32::from_rgb(118, 92, 78)),
                 );
-            }
-            CommandRunnerState::ProbingHostKey(progress) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spinner();
-                    ui.label(format!(
-                        "Probing the server host key for '{}' at {}:{} before the command starts.",
-                        progress.session_name, progress.host, progress.port
-                    ));
-                });
-            }
-            CommandRunnerState::AwaitingHostKeyConfirmation(prompt) => {
-                Frame::group(ui.style())
-                    .fill(Color32::from_rgb(247, 235, 224))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(209, 163, 126)))
-                    .inner_margin(Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.label(
-                            RichText::new("Unknown SSH host key")
-                                .strong()
-                                .color(Color32::from_rgb(141, 80, 44)),
-                        );
-                        ui.label(format!(
-                            "Session '{}' reached {}:{} and RusTTY needs confirmation before sending credentials.",
-                            prompt.session_name, prompt.host, prompt.port
-                        ));
-                        ui.label(format!("SHA-256 fingerprint: {}", prompt.fingerprint));
-                        ui.label(format!(
-                            "Known-hosts path: {}",
-                            prompt.known_hosts_path.display()
-                        ));
-                        ui.add_space(8.0);
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button("Trust once").clicked() {
-                                if let Err(error) = self.model.trust_pending_host_key_once() {
-                                    self.model.set_status_message(error);
-                                }
-                            }
-                            if ui.button("Trust and save").clicked() {
-                                if let Err(error) = self.model.trust_pending_host_key_and_save() {
-                                    self.model.set_status_message(error);
-                                }
-                            }
-                            if ui.button("Cancel").clicked() {
-                                self.model.cancel_pending_host_key();
-                            }
-                        });
-                    });
-            }
-            CommandRunnerState::Running(progress) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spinner();
-                    ui.label(format!(
-                        "Running '{}' on {}:{} for session '{}'.",
-                        progress.command, progress.host, progress.port, progress.session_name
-                    ));
-                });
-            }
-            CommandRunnerState::Finished(report) => {
-                Frame::group(ui.style())
-                    .fill(Color32::from_rgb(239, 233, 223))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(203, 191, 175)))
-                    .inner_margin(Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(
-                                RichText::new(format!(
-                                    "Completed with exit status {}",
-                                    report.exit_status
-                                ))
-                                .strong(),
-                            );
-                            if ui.button("Clear result").clicked() {
-                                self.model.clear_command_runner_state();
-                            }
-                        });
-                        ui.label(format!(
-                            "Host key: {} ({})",
-                            report.host_key_fingerprint, report.host_key_source
-                        ));
-                        if report.persisted_host_key {
-                            ui.label(
-                                RichText::new(
-                                    "The accepted host key was appended to the RusTTY known-hosts file.",
-                                )
-                                .color(Color32::from_rgb(57, 108, 74)),
-                            );
-                        }
-                        if let Some(warning) = &report.warning {
-                            ui.colored_label(Color32::from_rgb(168, 97, 54), warning);
-                        }
-
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Standard output").strong());
-                        if report.stdout.is_empty() {
-                            ui.label(
-                                RichText::new("No stdout was produced.")
-                                    .italics()
-                                    .color(Color32::from_rgb(112, 85, 70)),
-                            );
-                        } else {
-                            code_block(ui, &report.stdout);
-                        }
-
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("Standard error").strong());
-                        if report.stderr.is_empty() {
-                            ui.label(
-                                RichText::new("No stderr was produced.")
-                                    .italics()
-                                    .color(Color32::from_rgb(112, 85, 70)),
-                            );
-                        } else {
-                            code_block(ui, &report.stderr);
-                        }
-                    });
-            }
-            CommandRunnerState::Failed(error) => {
-                Frame::group(ui.style())
-                    .fill(Color32::from_rgb(247, 233, 229))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(189, 122, 103)))
-                    .inner_margin(Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.colored_label(Color32::from_rgb(154, 56, 48), error);
-                        if ui.button("Clear error").clicked() {
-                            self.model.clear_command_runner_state();
-                        }
-                    });
             }
         }
     }
@@ -597,7 +468,7 @@ impl RusttyApp {
                 }
                 ui.label(
                     RichText::new(
-                        "This draft is a launcher-side planning aid until the embedded terminal window lands.",
+                        "This draft is a launcher-side planning aid until ad-hoc GUI transport and session editing land.",
                     )
                     .italics()
                     .color(Color32::from_rgb(112, 85, 70)),
@@ -661,12 +532,12 @@ impl RusttyApp {
             .show(ui, |ui| {
                 section_card(ui, "Launcher status", |ui| {
                     ui.label(
-                        "This is the first real native RusTTY GUI client. It loads RusTTY config data, surfaces migrated PuTTY sessions, and gives operators a desktop place to review launch plans, diagnostics, and saved-session SSH command output.",
+                        "This is the first real native RusTTY GUI client. It loads RusTTY config data, surfaces migrated PuTTY sessions, and gives operators a desktop place to review launch plans, diagnostics, and saved-session command transcripts.",
                     );
                     ui.add_space(8.0);
                     ui.label(
                         RichText::new(
-                            "The embedded terminal emulator and live GUI transport window are still the next milestone, so the launcher currently focuses on saved-session inspection plus non-interactive SSH command execution.",
+                            "RusTTY now opens a dedicated saved-session terminal window for the first SSH-backed GUI workflow. Full interactive terminal emulation, scrollback behavior, resize handling, and non-SSH GUI transports are still queued in the next milestones.",
                         )
                         .color(Color32::from_rgb(108, 79, 64)),
                     );
@@ -676,7 +547,7 @@ impl RusttyApp {
                     for line in [
                         "Native launcher window with session browser and quick-connect draft",
                         "Config-state diagnostics, sample-config creation, and path copy actions",
-                        "Saved-session SSH command execution with host-key confirmation and captured output",
+                        "Dedicated saved-session terminal window with transcript history and host-key confirmation",
                         "Inspection of saved auth defaults, forwarding, and import provenance",
                         "Tool catalog with manual and changelog path discovery",
                     ] {
@@ -686,9 +557,9 @@ impl RusttyApp {
 
                 section_card(ui, "Next terminal milestones", |ui| {
                     for line in [
-                        "Embed the interactive SSH session window into `rustty` instead of deferring to `rusplink`",
+                        "Upgrade the saved-session terminal window from command transcripts to a live interactive SSH shell",
                         "Add real terminal emulation coverage for ANSI/VT state, resize, scrollback, and copy/paste",
-                        "Extend the GUI launcher into session editing, saving, and live host-key prompts",
+                        "Extend the GUI launcher into session editing, saving, and non-SSH transport windows",
                     ] {
                         ui.label(format!("• {line}"));
                     }
@@ -720,6 +591,212 @@ impl RusttyApp {
             ui.add_space(8.0);
             ui.colored_label(Color32::from_rgb(154, 56, 48), error);
         }
+    }
+
+    fn render_terminal_window(&mut self, ctx: &Context) {
+        let Some(snapshot) = self.model.terminal_window_snapshot() else {
+            return;
+        };
+        if !snapshot.visible {
+            return;
+        }
+
+        let title = format!("{} Terminal - {}", PRODUCT_NAME, snapshot.session_name);
+        let mut open = true;
+        egui::Window::new(title)
+            .id(egui::Id::new("rustty-terminal-window"))
+            .default_size([920.0, 700.0])
+            .min_width(720.0)
+            .min_height(520.0)
+            .open(&mut open)
+            .show(ctx, |ui| {
+                self.render_terminal_window_contents(ui, &snapshot);
+            });
+
+        if !open {
+            self.model.close_terminal_window();
+        }
+    }
+
+    fn render_terminal_window_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        snapshot: &TerminalWindowSnapshot,
+    ) {
+        ui.horizontal_wrapped(|ui| {
+            ui.heading(&snapshot.session_name);
+            protocol_badge(ui, snapshot.protocol);
+            ui.label(RichText::new(&snapshot.endpoint).color(Color32::from_rgb(99, 73, 60)));
+            ui.label(
+                RichText::new(terminal_state_label(&snapshot.command_runner_state))
+                    .color(Color32::from_rgb(108, 79, 64)),
+            );
+        });
+
+        ui.add_space(8.0);
+        ui.label(
+            RichText::new(
+                "This dedicated session window keeps command history, captured output, and host-key decisions separate from the launcher so `rustty` can evolve toward a real embedded terminal.",
+            )
+            .color(Color32::from_rgb(102, 77, 64)),
+        );
+
+        ui.add_space(10.0);
+        section_card(ui, "Session launch preview", |ui| {
+            code_block(ui, &snapshot.launch_preview);
+        });
+
+        ui.add_space(10.0);
+        section_card(ui, "Remote command", |ui| {
+            if snapshot.protocol != Protocol::Ssh {
+                ui.label(
+                    RichText::new(
+                        "Interactive GUI transport for this protocol is not implemented yet. The first dedicated terminal window currently targets saved SSH sessions.",
+                    )
+                    .italics()
+                    .color(Color32::from_rgb(118, 92, 78)),
+                );
+                return;
+            }
+
+            Grid::new("rustty-terminal-command-grid")
+                .num_columns(2)
+                .spacing(Vec2::new(16.0, 8.0))
+                .show(ui, |ui| {
+                    ui.label("Remote command");
+                    if let Some(command_input) = self.model.terminal_window_command_mut() {
+                        ui.text_edit_singleline(command_input);
+                    } else {
+                        ui.label("Terminal window is not available.");
+                    }
+                    ui.end_row();
+                });
+
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Run command").clicked() {
+                    if let Err(error) = self.model.start_terminal_window_command_run() {
+                        self.model.set_status_message(error);
+                    }
+                }
+                if ui.button("Copy command preview").clicked() {
+                    copy_text(
+                        ui.ctx(),
+                        snapshot.command_preview.clone(),
+                        &mut self.model,
+                        format!(
+                            "Copied terminal command preview for '{}'",
+                            snapshot.session_name
+                        ),
+                    );
+                }
+                if matches!(
+                    snapshot.command_runner_state,
+                    CommandRunnerState::Finished(_) | CommandRunnerState::Failed(_)
+                ) && ui.button("Clear status").clicked()
+                {
+                    self.model.clear_command_runner_state();
+                }
+            });
+
+            ui.add_space(8.0);
+            code_block(ui, &snapshot.command_preview);
+
+            match &snapshot.command_runner_state {
+                CommandRunnerState::Idle => {}
+                CommandRunnerState::ProbingHostKey(progress) => {
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        ui.label(format!(
+                            "Probing the SSH host key for '{}' at {}:{}.",
+                            progress.session_name, progress.host, progress.port
+                        ));
+                    });
+                }
+                CommandRunnerState::AwaitingHostKeyConfirmation(prompt) => {
+                    ui.add_space(8.0);
+                    Frame::group(ui.style())
+                        .fill(Color32::from_rgb(247, 235, 224))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(209, 163, 126)))
+                        .inner_margin(Margin::same(10))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("Unknown SSH host key")
+                                    .strong()
+                                    .color(Color32::from_rgb(141, 80, 44)),
+                            );
+                            ui.label(format!(
+                                "Session '{}' reached {}:{} and needs confirmation before credentials are sent.",
+                                prompt.session_name, prompt.host, prompt.port
+                            ));
+                            ui.label(format!("SHA-256 fingerprint: {}", prompt.fingerprint));
+                            ui.label(format!(
+                                "Known-hosts path: {}",
+                                prompt.known_hosts_path.display()
+                            ));
+                            ui.add_space(8.0);
+                            ui.horizontal_wrapped(|ui| {
+                                if ui.button("Trust once").clicked() {
+                                    if let Err(error) = self.model.trust_pending_host_key_once() {
+                                        self.model.set_status_message(error);
+                                    }
+                                }
+                                if ui.button("Trust and save").clicked() {
+                                    if let Err(error) =
+                                        self.model.trust_pending_host_key_and_save()
+                                    {
+                                        self.model.set_status_message(error);
+                                    }
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    self.model.cancel_pending_host_key();
+                                }
+                            });
+                        });
+                }
+                CommandRunnerState::Running(progress) => {
+                    ui.add_space(8.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spinner();
+                        ui.label(format!(
+                            "Running '{}' on {}:{} for session '{}'.",
+                            progress.command, progress.host, progress.port, progress.session_name
+                        ));
+                    });
+                }
+                CommandRunnerState::Finished(report) => {
+                    ui.add_space(8.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Completed with exit status {}. Host key: {} ({})",
+                            report.exit_status, report.host_key_fingerprint, report.host_key_source
+                        ))
+                        .color(Color32::from_rgb(57, 108, 74)),
+                    );
+                    if report.persisted_host_key {
+                        ui.label(
+                            RichText::new(
+                                "The accepted host key was appended to the RusTTY known-hosts file.",
+                            )
+                            .color(Color32::from_rgb(57, 108, 74)),
+                        );
+                    }
+                    if let Some(warning) = &report.warning {
+                        ui.colored_label(Color32::from_rgb(168, 97, 54), warning);
+                    }
+                }
+                CommandRunnerState::Failed(error) => {
+                    ui.add_space(8.0);
+                    ui.colored_label(Color32::from_rgb(154, 56, 48), error);
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        section_card(ui, "Transcript", |ui| {
+            terminal_surface(ui, &snapshot.transcript);
+        });
     }
 }
 
@@ -770,6 +847,8 @@ impl App for RusttyApp {
                 LauncherView::Tools => self.render_tools_view(ui),
                 LauncherView::About => self.render_about_view(ui),
             });
+
+        self.render_terminal_window(ctx);
     }
 }
 
@@ -884,5 +963,73 @@ fn session_endpoint(stored_session: &StoredSession) -> String {
         (Some(host), Some(port)) => format!("{host}:{port}"),
         (Some(host), None) => host.to_owned(),
         (None, _) => "No host configured".to_owned(),
+    }
+}
+
+fn terminal_state_label(command_runner_state: &CommandRunnerState) -> &'static str {
+    match command_runner_state {
+        CommandRunnerState::Idle => "Ready",
+        CommandRunnerState::ProbingHostKey(_) => "Probing host key",
+        CommandRunnerState::AwaitingHostKeyConfirmation(_) => "Waiting for host-key confirmation",
+        CommandRunnerState::Running(_) => "Running command",
+        CommandRunnerState::Finished(_) => "Last command finished",
+        CommandRunnerState::Failed(_) => "Last command failed",
+    }
+}
+
+fn terminal_surface(ui: &mut egui::Ui, transcript: &[TerminalTranscriptEntry]) {
+    Frame::group(ui.style())
+        .fill(Color32::from_rgb(26, 29, 33))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(63, 72, 82)))
+        .inner_margin(Margin::same(12))
+        .show(ui, |ui| {
+            ui.scope(|ui| {
+                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(230, 235, 240));
+                ScrollArea::vertical()
+                    .id_salt("rustty-terminal-transcript")
+                    .stick_to_bottom(true)
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        for entry in transcript {
+                            ui.label(
+                                RichText::new(&entry.title)
+                                    .monospace()
+                                    .strong()
+                                    .color(terminal_entry_title_color(entry.tone)),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(&entry.body)
+                                    .monospace()
+                                    .color(terminal_entry_body_color(entry.tone)),
+                            );
+                            ui.add_space(10.0);
+                        }
+                    });
+            });
+        });
+}
+
+fn terminal_entry_title_color(tone: TerminalTranscriptTone) -> Color32 {
+    match tone {
+        TerminalTranscriptTone::Prompt => Color32::from_rgb(133, 224, 164),
+        TerminalTranscriptTone::Info => Color32::from_rgb(156, 202, 255),
+        TerminalTranscriptTone::Success => Color32::from_rgb(146, 228, 174),
+        TerminalTranscriptTone::Warning => Color32::from_rgb(255, 205, 122),
+        TerminalTranscriptTone::Error => Color32::from_rgb(255, 151, 139),
+        TerminalTranscriptTone::Stdout => Color32::from_rgb(214, 223, 233),
+        TerminalTranscriptTone::Stderr => Color32::from_rgb(255, 181, 149),
+    }
+}
+
+fn terminal_entry_body_color(tone: TerminalTranscriptTone) -> Color32 {
+    match tone {
+        TerminalTranscriptTone::Prompt => Color32::from_rgb(226, 235, 240),
+        TerminalTranscriptTone::Info => Color32::from_rgb(206, 219, 231),
+        TerminalTranscriptTone::Success => Color32::from_rgb(212, 239, 221),
+        TerminalTranscriptTone::Warning => Color32::from_rgb(245, 226, 195),
+        TerminalTranscriptTone::Error => Color32::from_rgb(244, 212, 207),
+        TerminalTranscriptTone::Stdout => Color32::from_rgb(224, 229, 235),
+        TerminalTranscriptTone::Stderr => Color32::from_rgb(249, 215, 200),
     }
 }

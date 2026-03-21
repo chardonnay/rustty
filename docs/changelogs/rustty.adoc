@@ -2,17 +2,26 @@
 
 == Unreleased
 
+[#rustty-terminal-window]
+=== Dedicated terminal window
+
+* Added a dedicated saved-session terminal window to `rustty` so SSH-backed
+  GUI work now runs outside the selected-session detail card.
+* Added transcript history inside that window, including queued commands,
+  host-key decisions, completion summaries, and captured stdout/stderr blocks.
+* Added window visibility recovery so hidden in-flight terminal work can be
+  reopened from the launcher without losing the running task state.
+
 [#rustty-gui-command-runner]
 === Launcher-side SSH command runner
 
-* Added a launcher-side SSH command runner for saved SSH sessions directly
-  inside the `rustty` window.
+* Added the first SSH-backed GUI command workflow for saved sessions.
 * Added GUI-side host-key probing and confirmation so unknown SSH server keys
   can be trusted once, trusted and saved, or rejected before command
   execution.
-* Added captured stdout, stderr, exit-status, and host-key trust reporting in
-  the launcher so operators can review non-interactive command runs without
-  dropping back to the shell.
+* Added captured stdout, stderr, exit-status, and host-key trust reporting so
+  operators can review non-interactive command runs without dropping back to
+  the shell.
 
 [#rustty-gui-launcher]
 === Native GUI launcher

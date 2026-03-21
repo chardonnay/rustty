@@ -2,6 +2,14 @@
 
 == Unreleased
 
+[#rusagent-putty-ppk-input]
+=== PuTTY PPK identity loading
+
+* Documented and regression-tested `rusagent` support for loading PuTTY `PPK`
+  private keys through `--identity PATH` and `--add-identity PATH`.
+* Kept encrypted `PPK` support aligned with existing passphrase-indirection
+  through `--passphrase-env ENV`.
+
 [#rusagent-socket-service]
 === Socket service and identity loading
 

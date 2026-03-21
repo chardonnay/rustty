@@ -71,6 +71,8 @@ the bootstrap password flow for direct targets and simple saved sessions.
 Keyboard-interactive responses are currently stored as the name of an
 environment variable. `rusplink` reads that variable at execution time and
 splits the value into ordered prompt responses, one line per response.
+`private_key_path` can currently point to either an OpenSSH private key or a
+PuTTY `PPK` file.
 
 == Local Port-Forward Storage
 

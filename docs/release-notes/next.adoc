@@ -55,6 +55,9 @@
 * `rusplink` can now authenticate with OpenSSH private keys, optional
   passphrase indirection, and password fallback ordering.
   xref:../changelogs/rusplink.adoc#rusplink-public-key-auth[Changelog entry]
+* `rusplink` now documents and regression-tests PuTTY `PPK` private-key input
+  anywhere `--private-key PATH` or a saved session key path is used.
+  xref:../changelogs/rusplink.adoc#rusplink-putty-ppk-auth[Changelog entry]
 * `rusplink` can now authenticate with environment-driven SSH
   keyboard-interactive responses and include that auth source in its ordered
   fallback chain.
@@ -84,6 +87,15 @@
 * `rusagent` can now serve a Unix-domain SSH-agent socket, preload OpenSSH
   identities, add identities to a running agent, and list loaded public keys.
   xref:../changelogs/rusagent.adoc#rusagent-socket-service[Changelog entry]
+* `rusagent` now documents and regression-tests PuTTY `PPK` private-key input
+  for `--identity PATH` and `--add-identity PATH`.
+  xref:../changelogs/rusagent.adoc#rusagent-putty-ppk-input[Changelog entry]
+
+=== rusttygen
+
+* `rusttygen` now provides a real bootstrap CLI for inspecting OpenSSH or
+  PuTTY `PPK` private keys and converting them into OpenSSH outputs.
+  xref:../changelogs/rusttygen.adoc#rusttygen-ppk-bootstrap[Changelog entry]
 
 === Developer workflow
 

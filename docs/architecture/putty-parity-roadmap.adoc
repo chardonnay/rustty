@@ -34,7 +34,7 @@ branches can continue to work through the same queue without losing context.
 === 3. rusplink advanced SSH auth and compatibility (`in_progress`)
 
 * SSH agent authentication through `rusagent` (`done`)
-* PuTTY PPK loading and conversion
+* PuTTY `PPK` input for SSH private-key auth (`done`)
 * keyboard-interactive auth (`done`)
 * stricter host-key UI and compatibility prompts
 
@@ -76,10 +76,12 @@ branches can continue to work through the same queue without losing context.
 * desktop/background lifecycle integration
 
 [#roadmap-rusttygen]
-=== 9. rusttygen key management (`later`)
+=== 9. rusttygen key management (`in_progress`)
 
+* private-key inspection (`done`)
+* PuTTY `PPK` to OpenSSH conversion (`done`)
 * key generation for supported algorithms
-* OpenSSH and PuTTY-format conversion
+* OpenSSH to PuTTY `PPK` conversion
 * fingerprint display and passphrase changes
 
 [#roadmap-non-ssh]

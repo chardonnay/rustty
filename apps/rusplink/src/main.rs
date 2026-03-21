@@ -42,7 +42,7 @@ Notes:
   15432=127.0.0.1:5432 or 127.0.0.1:18080=127.0.0.1:80.
   --dynamic-forward SPEC uses [HOST:]PORT, for example:
   1080 or 127.0.0.1:1080.
-  Live SSH execution supports OpenSSH private keys, SSH-agent keys,
+  Live SSH execution supports OpenSSH and PuTTY PPK private keys, SSH-agent keys,
   keyboard-interactive responses, and password authentication.
   If multiple auth sources are configured, rusplink tries public-key auth
   first, then agent auth, then keyboard-interactive, then password

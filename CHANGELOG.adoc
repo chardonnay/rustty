@@ -74,6 +74,16 @@ This file tracks suite-level milestones. Tool-specific details live under
   `--agent` or `--agent-socket`, between direct key auth and
   keyboard-interactive fallback.
 
+[#suite-putty-ppk-interoperability]
+=== PuTTY PPK interoperability
+
+* Made PuTTY `PPK` private-key input an explicit, regression-tested bootstrap
+  path for both `rusplink` and `rusagent`.
+* Added a real `rusttygen` bootstrap CLI for private-key inspection and
+  one-way `PPK` to OpenSSH conversion.
+* Added repository-local `PPK` compatibility fixtures with attribution notes
+  so future key-format changes stay testable.
+
 [#suite-rusplink-local-forwarding]
 === rusplink local port forwarding
 

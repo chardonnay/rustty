@@ -30,7 +30,7 @@ Usage:
 
 Notes:
   `--serve` runs in the foreground until interrupted.
-  `--identity PATH` preloads one or more OpenSSH private keys into the agent.
+  `--identity PATH` preloads one or more OpenSSH or PuTTY PPK private keys into the agent.
   `--passphrase-env ENV` is used for encrypted private keys during add/load.
   `--lifetime SECONDS` applies an SSH-agent lifetime constraint to loaded keys.
 ";
@@ -607,10 +607,19 @@ fn load_identity(identity: &IdentityLoadSpec) -> Result<PrivateKey, String> {
         .as_deref()
         .map(|env_var| resolve_secret_env(env_var, "SSH key passphrase"))
         .transpose()?;
-    load_secret_key(&identity.path, passphrase.as_deref()).map_err(|error| {
+
+    load_identity_with_passphrase(&identity.path, passphrase.as_deref())
+}
+
+#[cfg(unix)]
+fn load_identity_with_passphrase(
+    identity_path: &Path,
+    passphrase: Option<&str>,
+) -> Result<PrivateKey, String> {
+    load_secret_key(identity_path, passphrase).map_err(|error| {
         format!(
             "failed to load SSH private key {}: {error}",
-            identity.path.display()
+            identity_path.display()
         )
     })
 }
@@ -696,7 +705,11 @@ mod tests {
     use ssh_key::rand_core::OsRng;
     use tokio::sync::oneshot;
 
-    use super::{Command, parse_command, run};
+    use super::{Command, load_identity_with_passphrase, parse_command, run};
+
+    const PPK_FIXTURE: &str = include_str!("../../../tests/fixtures/keys/id_ed25519.ppk");
+    const ENCRYPTED_PPK_FIXTURE: &str =
+        include_str!("../../../tests/fixtures/keys/id_ed25519_enc.ppk");
 
     #[test]
     fn defaults_to_help_when_no_arguments_are_supplied() {
@@ -752,6 +765,32 @@ mod tests {
         let output = String::from_utf8(output).expect("output should be UTF-8");
         assert!(!output.trim().is_empty());
         assert!(error_output.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_identity_supports_putty_ppk_files() {
+        let workspace = temporary_workspace();
+        let identity_path = workspace.join("id_ed25519.ppk");
+        std::fs::write(&identity_path, PPK_FIXTURE).expect("fixture should be written");
+
+        let private_key =
+            load_identity_with_passphrase(&identity_path, None).expect("PPK identity should load");
+        assert_eq!(private_key.algorithm().as_str(), "ssh-ed25519");
+        assert_eq!(private_key.comment(), "user@example.com");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn load_identity_supports_encrypted_putty_ppk_files() {
+        let workspace = temporary_workspace();
+        let identity_path = workspace.join("id_ed25519_enc.ppk");
+        std::fs::write(&identity_path, ENCRYPTED_PPK_FIXTURE).expect("fixture should be written");
+
+        let private_key = load_identity_with_passphrase(&identity_path, Some("123"))
+            .expect("encrypted PPK identity should load");
+        assert_eq!(private_key.algorithm().as_str(), "ssh-ed25519");
+        assert_eq!(private_key.comment(), "user@example.com");
     }
 
     #[cfg(unix)]

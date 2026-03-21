@@ -1,57 +1,84 @@
 = rusttygen Manual
 :toc:
 
-`rusttygen` is the planned key generation and conversion tool for RusTTY. It
-replaces PuTTY's `puttygen`.
+`rusttygen` is the key inspection and conversion tool for RusTTY. It replaces
+PuTTY's `puttygen`.
 
 == Purpose
 
-`rusttygen` is intended to generate, inspect, convert, and re-encrypt key
-material used by the wider RusTTY tool suite.
+`rusttygen` is intended to inspect, convert, and later generate key material
+used by the wider RusTTY tool suite.
+
+== Bootstrap Capability Profile
+
+* OpenSSH private-key inspection
+* PuTTY `PPK` private-key inspection
+* SHA-256 fingerprint reporting
+* OpenSSH public-key rendering for inspected inputs
+* conversion of OpenSSH or PuTTY `PPK` private keys into OpenSSH private keys
+* optional OpenSSH public-key output alongside conversion
+* optional passphrase indirection through environment variables
 
 == Planned Capability Profile
 
 * key generation for supported SSH algorithms
-* PuTTY PPK import and export
-* OpenSSH import and export
-* fingerprint display and comment editing
-* migration reporting for legacy key material
+* PuTTY `PPK` output
+* passphrase changes and re-encryption policy controls
+* comment editing
+* richer migration reporting for legacy key material
 
 == Usage Model
 
-The bootstrap binary currently prints a placeholder message. The future tool
-should provide a stable CLI, with any GUI workflows layered separately.
+The bootstrap CLI currently supports:
+
+* `--inspect PATH` to print line-oriented metadata about a private key
+* `--convert PATH --output PATH` to write an OpenSSH private key
+* `--public-output PATH` to also write the matching OpenSSH public key
+* `--passphrase-env ENV` to decrypt encrypted OpenSSH or PuTTY `PPK` inputs
+
+The output is intentionally script-friendly. `rusttygen` reports input format,
+whether the original input was encrypted, algorithm, comment, SHA-256
+fingerprint, and public-key text so migration steps are auditable.
 
 == Configuration and Storage
 
-Key output should default to RusTTY expectations while still supporting
-compatible export flows where users need PuTTY or OpenSSH interoperability.
+`rusttygen` does not currently persist key metadata in the RusTTY config file.
+It operates on explicit input and output paths, which keeps bootstrap
+conversions easy to review.
 
 == Logging and Diagnostics
 
-The tool should make KDF choices, encryption settings, fingerprint output, and
-legacy-format caveats explicit.
+The bootstrap tool emits line-oriented success output and explicit error
+messages for unsupported formats, missing passphrase variables, decode
+failures, and write failures.
 
 == Compatibility Notes
 
-RusTTY should document unsupported key variants clearly and never silently drop
-security-relevant metadata during conversion.
+RusTTY currently treats `rusttygen` as a one-way compatibility bridge for
+PuTTY `PPK` input into OpenSSH output. PuTTY `PPK` output and broader editing
+workflows are still future work and must remain documented as such.
 
 == Examples
 
 [source,text]
 ----
-rusttygen --generate ed25519 --output id_rustty
+rusttygen --inspect legacy.ppk
 ----
 
 [source,text]
 ----
-rusttygen --convert legacy.ppk --output openssh.pem
+rusttygen --inspect encrypted.ppk --passphrase-env RUSTTY_KEY_PASSPHRASE
+----
+
+[source,text]
+----
+rusttygen --convert legacy.ppk --output id_rustty --public-output id_rustty.pub
 ----
 
 == Current Limits
 
-The bootstrap implementation does not yet generate or convert keys.
+The current bootstrap implementation does not yet generate keys, edit
+comments, change passphrases, or emit PuTTY `PPK` output.
 
 == Related Docs
 

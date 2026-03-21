@@ -2,6 +2,16 @@
 
 == Unreleased
 
+[#rusplink-putty-ppk-auth]
+=== PuTTY PPK private-key authentication
+
+* Documented and regression-tested `rusplink` support for PuTTY `PPK` files
+  anywhere `--private-key PATH` or a saved `private_key_path` is used.
+* Kept encrypted `PPK` support aligned with existing passphrase-indirection
+  through `--key-passphrase-env ENV`.
+* Updated operator docs so `rusplink` no longer describes `PPK` loading as
+  missing bootstrap functionality.
+
 [#rusplink-agent-auth]
 === SSH-agent authentication
 

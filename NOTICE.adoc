@@ -7,6 +7,9 @@ ideas, fixtures, file formats, and compatibility knowledge from the PuTTY
 project over time. Wherever RusTTY contains derived material, the original
 PuTTY attribution and permission notice must remain preserved.
 
+RusTTY's PuTTY-compatible `PPK` regression fixtures under `tests/fixtures/`
+are kept for interoperability testing and remain covered by this notice.
+
 PuTTY upstream notice:
 
 [source,text]

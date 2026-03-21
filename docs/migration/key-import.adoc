@@ -1,13 +1,18 @@
 = Key Import and Export
 :toc:
 
-RusTTY intends to support both PuTTY and OpenSSH key material where practical.
+RusTTY supports both PuTTY and OpenSSH key material where practical and will
+expand that coverage over time.
+
+== Current Formats
+
+* PuTTY `PPK` input through `rusplink`, `rusagent`, and `rusttygen`
+* OpenSSH private and public key formats
 
 == Planned Formats
 
-* PuTTY PPK input
-* PuTTY PPK output where compatibility requires it
-* OpenSSH private and public key formats
+* PuTTY `PPK` output where compatibility requires it
+* richer key-editing workflows once `rusttygen` grows beyond bootstrap
 
 == Migration Expectations
 
@@ -21,3 +26,10 @@ RusTTY intends to support both PuTTY and OpenSSH key material where practical.
 Users migrating from PuTTY should prefer importing existing keys and then
 re-saving them through RusTTY tooling only after validating passphrases,
 comments, fingerprints, and target format requirements.
+
+Today, the safest bootstrap flow is:
+
+* inspect an existing PuTTY key with `rusttygen --inspect`
+* convert it to OpenSSH with `rusttygen --convert ... --output ...`
+* use that converted OpenSSH key or the original `PPK` directly with
+  `rusplink` or `rusagent`

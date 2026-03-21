@@ -3,7 +3,7 @@
 use std::{
     fmt, io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
@@ -768,11 +768,8 @@ async fn authenticate_session(
                 private_key_path,
                 key_passphrase,
             } => {
-                let private_key = load_secret_key(private_key_path, key_passphrase.as_deref())
-                    .map_err(|source| TransportError::PrivateKeyLoad {
-                        path: private_key_path.clone(),
-                        source,
-                    })?;
+                let private_key =
+                    load_private_key_file(private_key_path, key_passphrase.as_deref())?;
                 let signature_hash = session
                     .best_supported_rsa_hash()
                     .await
@@ -806,6 +803,18 @@ async fn authenticate_session(
     }
 
     Err(TransportError::AuthenticationRejected)
+}
+
+fn load_private_key_file(
+    private_key_path: &Path,
+    key_passphrase: Option<&str>,
+) -> Result<russh::keys::PrivateKey, TransportError> {
+    load_secret_key(private_key_path, key_passphrase).map_err(|source| {
+        TransportError::PrivateKeyLoad {
+            path: private_key_path.to_path_buf(),
+            source,
+        }
+    })
 }
 
 #[cfg(unix)]
@@ -1666,7 +1675,10 @@ impl ShellChannel for russh::Channel<client::Msg> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     use ssh_key::PublicKey;
 
@@ -1674,8 +1686,12 @@ mod tests {
         HostKeyCheck, SOCKS_ADDRESS_DOMAIN, SOCKS_ADDRESS_IPV4, SOCKS_ADDRESS_IPV6,
         SshAuthentication, SshDynamicForwardSpec, SshExecRequest, SshLocalForwardSpec,
         SshRemoteForwardSpec, TerminalSize, TransportError, VerifiedHostKeySource,
-        decode_socks5_host, execute_ssh_command,
+        decode_socks5_host, execute_ssh_command, load_private_key_file,
     };
+
+    const PPK_FIXTURE: &str = include_str!("../../../tests/fixtures/keys/id_ed25519.ppk");
+    const ENCRYPTED_PPK_FIXTURE: &str =
+        include_str!("../../../tests/fixtures/keys/id_ed25519_enc.ppk");
 
     #[test]
     fn rejects_missing_remote_command() {
@@ -1856,5 +1872,39 @@ mod tests {
 
         assert_eq!(ipv4.as_deref(), Some("127.0.0.1"));
         assert_eq!(ipv6.as_deref(), Some("2001:db8::1"));
+    }
+
+    #[test]
+    fn load_private_key_file_supports_putty_ppk_input() {
+        let workspace = temporary_workspace();
+        let key_path = workspace.join("id_ed25519.ppk");
+        std::fs::write(&key_path, PPK_FIXTURE).expect("fixture should be written");
+
+        let private_key =
+            load_private_key_file(&key_path, None).expect("PPK private key should load");
+        assert_eq!(private_key.algorithm().as_str(), "ssh-ed25519");
+        assert_eq!(private_key.comment(), "user@example.com");
+    }
+
+    #[test]
+    fn load_private_key_file_supports_encrypted_putty_ppk_input() {
+        let workspace = temporary_workspace();
+        let key_path = workspace.join("id_ed25519_enc.ppk");
+        std::fs::write(&key_path, ENCRYPTED_PPK_FIXTURE).expect("fixture should be written");
+
+        let private_key =
+            load_private_key_file(&key_path, Some("123")).expect("encrypted PPK should load");
+        assert_eq!(private_key.algorithm().as_str(), "ssh-ed25519");
+        assert_eq!(private_key.comment(), "user@example.com");
+    }
+
+    fn temporary_workspace() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be monotonic")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("rustty-transport-test-{nonce}"));
+        std::fs::create_dir_all(&path).expect("temporary workspace should be created");
+        path
     }
 }

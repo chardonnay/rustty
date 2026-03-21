@@ -1,0 +1,10 @@
+= Key Fixtures Notice
+
+This directory contains compatibility fixtures used by RusTTY regression tests.
+
+The PuTTY `PPK` fixtures in this directory are derived from
+`internal-russh-forked-ssh-key` interoperability test examples and are kept
+solely to validate PuTTY-compatible key-loading behavior in RusTTY.
+
+RusTTY's PuTTY attribution requirements still apply to these compatibility
+fixtures. See xref:../../../NOTICE.adoc[NOTICE.adoc].

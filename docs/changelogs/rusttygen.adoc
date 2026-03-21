@@ -2,6 +2,15 @@
 
 == Unreleased
 
+[#rusttygen-ppk-bootstrap]
+=== PPK inspection and OpenSSH conversion
+
+* Replaced the `rusttygen` placeholder binary with a real bootstrap CLI.
+* Added `--inspect PATH` for line-oriented metadata on OpenSSH and PuTTY `PPK`
+  private keys.
+* Added `--convert PATH --output PATH` with optional `--public-output PATH`
+  so PuTTY `PPK` keys can be migrated into OpenSSH private/public key files.
+
 [#rusttygen-bootstrap-repo]
 === Bootstrap repository
 

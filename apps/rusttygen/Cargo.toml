@@ -13,4 +13,4 @@ publish = false
 workspace = true
 
 [dependencies]
-rustty-core.workspace = true
+russh.workspace = true

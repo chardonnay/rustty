@@ -1,12 +1,14 @@
 use std::{
     env,
-    future::Future,
     io::{self, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process,
-    time::Duration,
 };
 
+#[cfg(unix)]
+use std::{future::Future, path::Path, time::Duration};
+
+#[cfg(unix)]
 use russh::keys::{
     HashAlg, PrivateKey, agent::Constraint, agent::client::AgentClient, agent::server,
     load_secret_key,
@@ -694,22 +696,9 @@ impl Drop for SocketCleanup {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        io,
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::path::PathBuf;
 
-    use russh::keys::Algorithm;
-    use ssh_key::LineEnding;
-    use ssh_key::rand_core::OsRng;
-    use tokio::sync::oneshot;
-
-    use super::{Command, load_identity_with_passphrase, parse_command, run};
-
-    const PPK_FIXTURE: &str = include_str!("../../../tests/fixtures/keys/id_ed25519.ppk");
-    const ENCRYPTED_PPK_FIXTURE: &str =
-        include_str!("../../../tests/fixtures/keys/id_ed25519_enc.ppk");
+    use super::{Command, parse_command, run};
 
     #[test]
     fn defaults_to_help_when_no_arguments_are_supplied() {
@@ -766,8 +755,27 @@ mod tests {
         assert!(!output.trim().is_empty());
         assert!(error_output.is_empty());
     }
+}
 
-    #[cfg(unix)]
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use std::{
+        io,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use russh::keys::Algorithm;
+    use ssh_key::LineEnding;
+    use ssh_key::rand_core::OsRng;
+    use tokio::sync::oneshot;
+
+    use super::load_identity_with_passphrase;
+
+    const PPK_FIXTURE: &str = include_str!("../../../tests/fixtures/keys/id_ed25519.ppk");
+    const ENCRYPTED_PPK_FIXTURE: &str =
+        include_str!("../../../tests/fixtures/keys/id_ed25519_enc.ppk");
+
     #[test]
     fn load_identity_supports_putty_ppk_files() {
         let workspace = temporary_workspace();
@@ -780,7 +788,6 @@ mod tests {
         assert_eq!(private_key.comment(), "user@example.com");
     }
 
-    #[cfg(unix)]
     #[test]
     fn load_identity_supports_encrypted_putty_ppk_files() {
         let workspace = temporary_workspace();
@@ -793,7 +800,6 @@ mod tests {
         assert_eq!(private_key.comment(), "user@example.com");
     }
 
-    #[cfg(unix)]
     #[test]
     fn serve_add_and_list_identities_round_trip() {
         let workspace = temporary_workspace();
@@ -852,7 +858,6 @@ mod tests {
         });
     }
 
-    #[cfg(unix)]
     fn temporary_workspace() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)

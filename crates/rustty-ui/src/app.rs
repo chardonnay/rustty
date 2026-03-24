@@ -19,6 +19,23 @@ use crate::model::{
     host_key_policy_label, import_source_label, session_launch_preview, storage_format_label,
 };
 
+const APP_BG: Color32 = Color32::from_rgb(7, 9, 10);
+const PANEL_BG: Color32 = Color32::from_rgb(12, 15, 16);
+const PANEL_ALT_BG: Color32 = Color32::from_rgb(16, 20, 22);
+const CARD_BG: Color32 = Color32::from_rgb(13, 17, 18);
+const CARD_BG_SOFT: Color32 = Color32::from_rgb(17, 22, 24);
+const STROKE_SOFT: Color32 = Color32::from_rgb(47, 59, 54);
+const STROKE_STRONG: Color32 = Color32::from_rgb(73, 98, 84);
+const ACCENT_GREEN: Color32 = Color32::from_rgb(94, 224, 122);
+const ACCENT_GREEN_SOFT: Color32 = Color32::from_rgb(48, 120, 67);
+const TEXT_PRIMARY: Color32 = Color32::from_rgb(227, 232, 236);
+const TEXT_MUTED: Color32 = Color32::from_rgb(136, 147, 155);
+const TEXT_DIM: Color32 = Color32::from_rgb(107, 118, 126);
+const TERMINAL_BLACK: Color32 = Color32::from_rgb(0, 0, 0);
+const TERMINAL_BORDER: Color32 = Color32::from_rgb(53, 72, 58);
+const WARNING_AMBER: Color32 = Color32::from_rgb(255, 205, 122);
+const ERROR_RED: Color32 = Color32::from_rgb(255, 151, 139);
+
 /// Runs the native RusTTY launcher window.
 pub fn run_native(options: LauncherOptions) -> Result<(), String> {
     let native_options = NativeOptions {
@@ -52,11 +69,17 @@ impl RusttyApp {
 
     fn render_top_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.heading(RichText::new(PRODUCT_NAME).size(28.0).strong());
+            ui.heading(
+                RichText::new(PRODUCT_NAME)
+                    .size(26.0)
+                    .strong()
+                    .monospace()
+                    .color(TEXT_PRIMARY),
+            );
             ui.label(
-                RichText::new("Native session launcher")
+                RichText::new("terminal-first session workspace")
                     .size(15.0)
-                    .color(Color32::from_rgb(110, 73, 56)),
+                    .color(TEXT_MUTED),
             );
             ui.add_space(16.0);
 
@@ -95,9 +118,7 @@ impl RusttyApp {
             }
 
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(
-                    RichText::new(self.model.status_message()).color(Color32::from_rgb(95, 70, 58)),
-                );
+                ui.label(RichText::new(self.model.status_message()).color(TEXT_MUTED));
             });
         });
 
@@ -117,8 +138,8 @@ impl RusttyApp {
     }
 
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Workspace");
-        ui.label(self.model.config_summary());
+        ui.heading(RichText::new("Workspace").monospace().color(TEXT_PRIMARY));
+        ui.label(RichText::new(self.model.config_summary()).color(TEXT_MUTED));
         ui.add_space(8.0);
 
         stats_card(ui, &self.model);
@@ -137,7 +158,7 @@ impl RusttyApp {
             ui.label(
                 RichText::new("No sessions match the current filter.")
                     .italics()
-                    .color(Color32::from_rgb(118, 92, 78)),
+                    .color(TEXT_DIM),
             );
             return;
         }
@@ -161,17 +182,23 @@ impl RusttyApp {
 
                     Frame::group(ui.style())
                         .fill(if selected {
-                            Color32::from_rgb(233, 220, 206)
+                            ACCENT_GREEN_SOFT.linear_multiply(0.35)
                         } else {
-                            Color32::from_rgb(244, 237, 228)
+                            PANEL_ALT_BG
                         })
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(216, 203, 189)))
+                        .stroke(Stroke::new(
+                            1.0,
+                            if selected { STROKE_STRONG } else { STROKE_SOFT },
+                        ))
                         .inner_margin(Margin::same(10))
                         .show(ui, |ui| {
                             if ui
                                 .selectable_label(
                                     selected,
-                                    RichText::new(&stored_session.session.name).strong(),
+                                    RichText::new(&stored_session.session.name)
+                                        .strong()
+                                        .color(TEXT_PRIMARY)
+                                        .monospace(),
                                 )
                                 .clicked()
                             {
@@ -180,13 +207,9 @@ impl RusttyApp {
 
                             ui.horizontal_wrapped(|ui| {
                                 protocol_badge(ui, stored_session.session.protocol);
-                                ui.label(summary);
+                                ui.label(RichText::new(summary).monospace().color(TEXT_MUTED));
                             });
-                            ui.label(
-                                RichText::new(imported)
-                                    .size(12.0)
-                                    .color(Color32::from_rgb(108, 81, 67)),
-                            );
+                            ui.label(RichText::new(imported).size(12.0).color(TEXT_DIM));
                         });
                     ui.add_space(6.0);
                 }
@@ -285,7 +308,7 @@ impl RusttyApp {
                 } else {
                     "Creating a new saved session. Save will create the RusTTY config file if it does not exist yet."
                 })
-                .color(Color32::from_rgb(102, 77, 64)),
+                .color(TEXT_MUTED),
             );
             if let Some(import_source) = imported_from {
                 ui.label(
@@ -293,7 +316,7 @@ impl RusttyApp {
                         "Imported provenance: {}",
                         import_source_label(import_source)
                     ))
-                    .color(Color32::from_rgb(108, 79, 64)),
+                    .color(TEXT_DIM),
                 );
             }
 
@@ -314,7 +337,7 @@ impl RusttyApp {
                 RichText::new(
                     "Import a PuTTY registry export, a Unix PuTTY session file, or a `sessions/` directory directly into the RusTTY config shown by this launcher.",
                 )
-                .color(Color32::from_rgb(102, 77, 64)),
+                .color(TEXT_MUTED),
             );
 
             ui.add_space(8.0);
@@ -362,10 +385,7 @@ impl RusttyApp {
             ui.horizontal_wrapped(|ui| {
                 ui.heading(&session.name);
                 protocol_badge(ui, session.protocol);
-                ui.label(
-                    RichText::new(session_endpoint(stored_session))
-                        .color(Color32::from_rgb(99, 73, 60)),
-                );
+                ui.label(RichText::new(session_endpoint(stored_session)).color(TEXT_MUTED));
             });
 
             ui.add_space(8.0);
@@ -458,7 +478,7 @@ impl RusttyApp {
                 ui.label(
                     RichText::new("No forwarding rules saved for this session.")
                         .italics()
-                        .color(Color32::from_rgb(118, 92, 78)),
+                        .color(TEXT_DIM),
                 );
             }
 
@@ -489,7 +509,7 @@ impl RusttyApp {
             RichText::new(
                 "Open a dedicated session window for this saved session. SSH sessions can already run non-interactive commands there with transcript history and GUI-side host-key confirmation.",
             )
-            .color(Color32::from_rgb(102, 77, 64)),
+            .color(TEXT_MUTED),
         );
 
         ui.add_space(8.0);
@@ -514,7 +534,7 @@ impl RusttyApp {
                         "Interactive GUI transport for this protocol is still queued after the first SSH-backed terminal window milestone.",
                     )
                     .italics()
-                    .color(Color32::from_rgb(118, 92, 78)),
+                    .color(TEXT_DIM),
                 );
             }
         });
@@ -528,7 +548,7 @@ impl RusttyApp {
                     "Current window state: {}",
                     terminal_state_label(&snapshot.command_runner_state)
                 ))
-                .color(Color32::from_rgb(108, 79, 64)),
+                .color(TEXT_MUTED),
             );
             if !snapshot.visible {
                 ui.label(
@@ -536,7 +556,7 @@ impl RusttyApp {
                         "The terminal window is currently hidden. Reopen it to continue with host-key prompts or review the transcript.",
                     )
                     .italics()
-                    .color(Color32::from_rgb(118, 92, 78)),
+                    .color(TEXT_DIM),
                 );
             }
         }
@@ -600,7 +620,7 @@ impl RusttyApp {
                         "This draft is still a launcher-side planning aid. Real saved-session editing now lives in the session editor above, while ad-hoc GUI transport remains queued.",
                     )
                     .italics()
-                    .color(Color32::from_rgb(112, 85, 70)),
+                    .color(TEXT_DIM),
                 );
             });
 
@@ -668,7 +688,7 @@ impl RusttyApp {
                         RichText::new(
                             "RusTTY now opens a dedicated saved-session terminal window for the first SSH-backed GUI workflow. Full interactive terminal emulation, scrollback behavior, resize handling, and non-SSH GUI transports are still queued in the next milestones.",
                         )
-                        .color(Color32::from_rgb(108, 79, 64)),
+                        .color(TEXT_MUTED),
                     );
                 });
 
@@ -719,7 +739,7 @@ impl RusttyApp {
         }
         if let Some(error) = self.model.config_error() {
             ui.add_space(8.0);
-            ui.colored_label(Color32::from_rgb(154, 56, 48), error);
+            ui.colored_label(ERROR_RED, error);
         }
     }
 
@@ -754,13 +774,18 @@ impl RusttyApp {
         snapshot: &TerminalWindowSnapshot,
     ) {
         ui.horizontal_wrapped(|ui| {
-            ui.heading(&snapshot.session_name);
-            protocol_badge(ui, snapshot.protocol);
-            ui.label(RichText::new(&snapshot.endpoint).color(Color32::from_rgb(99, 73, 60)));
-            ui.label(
-                RichText::new(window_activity_label(snapshot))
-                    .color(Color32::from_rgb(108, 79, 64)),
+            ui.heading(
+                RichText::new(&snapshot.session_name)
+                    .monospace()
+                    .color(TEXT_PRIMARY),
             );
+            protocol_badge(ui, snapshot.protocol);
+            ui.label(
+                RichText::new(&snapshot.endpoint)
+                    .monospace()
+                    .color(TEXT_MUTED),
+            );
+            ui.label(RichText::new(window_activity_label(snapshot)).color(TEXT_DIM));
         });
 
         ui.add_space(8.0);
@@ -768,7 +793,7 @@ impl RusttyApp {
             RichText::new(
                 "This dedicated session window now hosts both saved-session command runs and the first live SSH shell workflow, while RusTTY grows toward fuller terminal emulation.",
             )
-            .color(Color32::from_rgb(102, 77, 64)),
+            .color(TEXT_MUTED),
         );
 
         ui.add_space(10.0);
@@ -784,7 +809,7 @@ impl RusttyApp {
                         "Interactive GUI transport for this protocol is not implemented yet. The first dedicated terminal window currently targets saved SSH sessions.",
                     )
                     .italics()
-                    .color(Color32::from_rgb(118, 92, 78)),
+                    .color(TEXT_DIM),
                 );
                 return;
             }
@@ -916,23 +941,23 @@ impl RusttyApp {
                             "Completed with exit status {}. Host key: {} ({})",
                             report.exit_status, report.host_key_fingerprint, report.host_key_source
                         ))
-                        .color(Color32::from_rgb(57, 108, 74)),
+                        .color(ACCENT_GREEN),
                     );
                     if report.persisted_host_key {
                         ui.label(
                             RichText::new(
                                 "The accepted host key was appended to the RusTTY known-hosts file.",
                             )
-                            .color(Color32::from_rgb(57, 108, 74)),
+                            .color(ACCENT_GREEN),
                         );
                     }
                     if let Some(warning) = &report.warning {
-                        ui.colored_label(Color32::from_rgb(168, 97, 54), warning);
+                        ui.colored_label(WARNING_AMBER, warning);
                     }
                 }
                 CommandRunnerState::Failed(error) => {
                     ui.add_space(8.0);
-                    ui.colored_label(Color32::from_rgb(154, 56, 48), error);
+                    ui.colored_label(ERROR_RED, error);
                 }
             }
 
@@ -966,7 +991,7 @@ impl RusttyApp {
                             "Interactive shell is live on {}:{} for '{}'. Click the terminal surface below to focus input.",
                             progress.host, progress.port, progress.session_name
                         ))
-                        .color(Color32::from_rgb(57, 108, 74)),
+                        .color(ACCENT_GREEN),
                     );
                 }
                 InteractiveShellState::Finished(report) => {
@@ -976,20 +1001,20 @@ impl RusttyApp {
                             "Interactive shell exited with status {}. Host key: {} ({})",
                             report.exit_status, report.host_key_fingerprint, report.host_key_source
                         ))
-                        .color(Color32::from_rgb(57, 108, 74)),
+                        .color(ACCENT_GREEN),
                     );
                     if report.persisted_host_key {
                         ui.label(
                             RichText::new(
                                 "The accepted host key was appended to the RusTTY known-hosts file.",
                             )
-                            .color(Color32::from_rgb(57, 108, 74)),
+                            .color(ACCENT_GREEN),
                         );
                     }
                 }
                 InteractiveShellState::Failed(error) => {
                     ui.add_space(8.0);
-                    ui.colored_label(Color32::from_rgb(154, 56, 48), error);
+                    ui.colored_label(ERROR_RED, error);
                 }
             }
 
@@ -1007,7 +1032,7 @@ impl RusttyApp {
                         "The live terminal surface will appear here once GUI transport support exists for this protocol.",
                     )
                     .italics()
-                    .color(Color32::from_rgb(118, 92, 78)),
+                    .color(TEXT_DIM),
                 );
                 return;
             }
@@ -1049,7 +1074,7 @@ impl RusttyApp {
                     "Start an interactive shell to turn this surface into a live SSH terminal."
                 })
                 .italics()
-                .color(Color32::from_rgb(112, 85, 70)),
+                .color(TEXT_MUTED),
             );
         });
 
@@ -1065,24 +1090,36 @@ impl RusttyApp {
         prompt: &crate::model::HostKeyPrompt,
     ) {
         Frame::group(ui.style())
-            .fill(Color32::from_rgb(247, 235, 224))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(209, 163, 126)))
+            .fill(CARD_BG_SOFT)
+            .stroke(Stroke::new(1.0, STROKE_STRONG))
             .inner_margin(Margin::same(10))
             .show(ui, |ui| {
                 ui.label(
                     RichText::new("Unknown SSH host key")
                         .strong()
-                        .color(Color32::from_rgb(141, 80, 44)),
+                        .monospace()
+                        .color(ACCENT_GREEN),
                 );
-                ui.label(format!(
-                    "Session '{}' reached {}:{} and needs confirmation before credentials are sent.",
-                    prompt.session_name, prompt.host, prompt.port
-                ));
-                ui.label(format!("SHA-256 fingerprint: {}", prompt.fingerprint));
-                ui.label(format!(
-                    "Known-hosts path: {}",
-                    prompt.known_hosts_path.display()
-                ));
+                ui.label(
+                    RichText::new(format!(
+                        "Session '{}' reached {}:{} and needs confirmation before credentials are sent.",
+                        prompt.session_name, prompt.host, prompt.port
+                    ))
+                    .color(TEXT_MUTED),
+                );
+                ui.label(
+                    RichText::new(format!("SHA-256 fingerprint: {}", prompt.fingerprint))
+                        .monospace()
+                        .color(TEXT_PRIMARY),
+                );
+                ui.label(
+                    RichText::new(format!(
+                        "Known-hosts path: {}",
+                        prompt.known_hosts_path.display()
+                    ))
+                    .monospace()
+                    .color(TEXT_DIM),
+                );
                 ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("Trust once").clicked() {
@@ -1137,11 +1174,7 @@ impl App for RusttyApp {
         }
 
         TopBottomPanel::top("rustty-top-bar")
-            .frame(
-                Frame::NONE
-                    .fill(Color32::from_rgb(248, 242, 233))
-                    .inner_margin(Margin::same(12)),
-            )
+            .frame(Frame::NONE.fill(PANEL_BG).inner_margin(Margin::same(12)))
             .show(ctx, |ui| self.render_top_bar(ui));
 
         TopBottomPanel::bottom("rustty-diagnostics")
@@ -1149,7 +1182,7 @@ impl App for RusttyApp {
             .default_height(140.0)
             .frame(
                 Frame::NONE
-                    .fill(Color32::from_rgb(239, 231, 220))
+                    .fill(TERMINAL_BLACK)
                     .inner_margin(Margin::same(12)),
             )
             .show(ctx, |ui| self.render_diagnostics(ui));
@@ -1160,17 +1193,13 @@ impl App for RusttyApp {
             .resizable(true)
             .frame(
                 Frame::NONE
-                    .fill(Color32::from_rgb(244, 237, 228))
+                    .fill(PANEL_ALT_BG)
                     .inner_margin(Margin::same(12)),
             )
             .show(ctx, |ui| self.render_sidebar(ui));
 
         egui::CentralPanel::default()
-            .frame(
-                Frame::NONE
-                    .fill(Color32::from_rgb(250, 246, 240))
-                    .inner_margin(Margin::same(14)),
-            )
+            .frame(Frame::NONE.fill(APP_BG).inner_margin(Margin::same(14)))
             .show(ctx, |ui| match self.model.view() {
                 LauncherView::Sessions => self.render_sessions_view(ui),
                 LauncherView::Tools => self.render_tools_view(ui),
@@ -1183,20 +1212,49 @@ impl App for RusttyApp {
 
 fn configure_visuals(context: &Context) {
     let mut style = (*context.style()).clone();
-    style.spacing.item_spacing = Vec2::new(10.0, 8.0);
-    style.spacing.button_padding = Vec2::new(10.0, 6.0);
-    style.visuals = egui::Visuals::light();
-    style.visuals.panel_fill = Color32::from_rgb(250, 246, 240);
-    style.visuals.extreme_bg_color = Color32::from_rgb(233, 226, 216);
-    style.visuals.faint_bg_color = Color32::from_rgb(240, 232, 222);
-    style.visuals.code_bg_color = Color32::from_rgb(236, 228, 218);
-    style.visuals.selection.bg_fill = Color32::from_rgb(189, 108, 74);
-    style.visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
-    style.visuals.widgets.active.bg_fill = Color32::from_rgb(189, 108, 74);
-    style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(221, 200, 181);
-    style.visuals.widgets.inactive.bg_fill = Color32::from_rgb(241, 233, 224);
-    style.visuals.window_fill = Color32::from_rgb(250, 246, 240);
+    style.spacing.item_spacing = Vec2::new(10.0, 9.0);
+    style.spacing.button_padding = Vec2::new(12.0, 7.0);
+    style.visuals = egui::Visuals::dark();
+    style.visuals.panel_fill = APP_BG;
+    style.visuals.extreme_bg_color = PANEL_ALT_BG;
+    style.visuals.faint_bg_color = PANEL_BG;
+    style.visuals.code_bg_color = TERMINAL_BLACK;
+    style.visuals.window_fill = PANEL_BG;
+    style.visuals.window_stroke = Stroke::new(1.0, STROKE_SOFT);
+    style.visuals.selection.bg_fill = ACCENT_GREEN_SOFT;
+    style.visuals.selection.stroke = Stroke::new(1.0, ACCENT_GREEN);
+    style.visuals.widgets.active.bg_fill = ACCENT_GREEN_SOFT;
+    style.visuals.widgets.active.weak_bg_fill = ACCENT_GREEN_SOFT;
+    style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    style.visuals.widgets.hovered.bg_fill = CARD_BG_SOFT;
+    style.visuals.widgets.hovered.weak_bg_fill = CARD_BG_SOFT;
+    style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT_PRIMARY);
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, STROKE_STRONG);
+    style.visuals.widgets.inactive.bg_fill = CARD_BG;
+    style.visuals.widgets.inactive.weak_bg_fill = CARD_BG;
+    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, STROKE_SOFT);
+    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT_MUTED);
+    style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT_MUTED);
+    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, STROKE_SOFT);
+    style.visuals.override_text_color = Some(TEXT_PRIMARY);
+    style.visuals.hyperlink_color = ACCENT_GREEN;
+    style.visuals.window_corner_radius = egui::CornerRadius::same(6);
+    style.visuals.menu_corner_radius = egui::CornerRadius::same(4);
+    style
+        .text_styles
+        .insert(egui::TextStyle::Body, egui::FontId::monospace(14.0));
+    style
+        .text_styles
+        .insert(egui::TextStyle::Button, egui::FontId::monospace(14.0));
+    style
+        .text_styles
+        .insert(egui::TextStyle::Small, egui::FontId::monospace(12.0));
+    style
+        .text_styles
+        .insert(egui::TextStyle::Monospace, egui::FontId::monospace(14.0));
+    style
+        .text_styles
+        .insert(egui::TextStyle::Heading, egui::FontId::monospace(21.0));
     context.set_style(style);
 }
 
@@ -1293,7 +1351,7 @@ fn render_session_editor_form(ui: &mut egui::Ui, draft: &mut SessionEditorDraft)
         RichText::new(
             "Use one rule per line as `source -> target`. Dynamic forwards expect one listen address per line.",
         )
-        .color(Color32::from_rgb(108, 79, 64)),
+        .color(TEXT_MUTED),
     );
 
     ui.add_space(8.0);
@@ -1318,58 +1376,80 @@ fn render_session_editor_form(ui: &mut egui::Ui, draft: &mut SessionEditorDraft)
 fn protocol_badge(ui: &mut egui::Ui, protocol: Protocol) {
     let color = protocol_color(protocol);
     Frame::group(ui.style())
-        .fill(color.linear_multiply(0.10))
-        .stroke(Stroke::new(1.0, color.linear_multiply(0.55)))
+        .fill(color.linear_multiply(0.16))
+        .stroke(Stroke::new(1.0, color.linear_multiply(0.75)))
         .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
-            ui.label(RichText::new(protocol.label()).strong().color(color));
+            ui.label(
+                RichText::new(protocol.label())
+                    .strong()
+                    .color(color)
+                    .monospace(),
+            );
         });
 }
 
 fn protocol_color(protocol: Protocol) -> Color32 {
     match protocol {
-        Protocol::Ssh => Color32::from_rgb(33, 115, 88),
-        Protocol::Scp => Color32::from_rgb(56, 98, 164),
-        Protocol::Sftp => Color32::from_rgb(65, 128, 164),
-        Protocol::Telnet => Color32::from_rgb(165, 92, 48),
-        Protocol::Raw => Color32::from_rgb(118, 88, 153),
-        Protocol::Rlogin => Color32::from_rgb(153, 72, 98),
-        Protocol::Serial => Color32::from_rgb(128, 112, 53),
-        Protocol::Agent => Color32::from_rgb(92, 112, 138),
-        Protocol::Keygen => Color32::from_rgb(121, 93, 54),
+        Protocol::Ssh => ACCENT_GREEN,
+        Protocol::Scp => Color32::from_rgb(111, 184, 255),
+        Protocol::Sftp => Color32::from_rgb(93, 210, 228),
+        Protocol::Telnet => Color32::from_rgb(255, 181, 84),
+        Protocol::Raw => Color32::from_rgb(208, 151, 255),
+        Protocol::Rlogin => Color32::from_rgb(255, 132, 164),
+        Protocol::Serial => Color32::from_rgb(219, 210, 101),
+        Protocol::Agent => Color32::from_rgb(143, 180, 214),
+        Protocol::Keygen => Color32::from_rgb(211, 176, 102),
     }
 }
 
 fn stats_card(ui: &mut egui::Ui, model: &LauncherModel) {
     Frame::group(ui.style())
-        .fill(Color32::from_rgb(237, 228, 216))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(211, 197, 182)))
+        .fill(CARD_BG)
+        .stroke(Stroke::new(1.0, STROKE_SOFT))
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
-            ui.label(RichText::new("Saved sessions").strong());
-            ui.label(model.session_count().to_string());
+            ui.label(
+                RichText::new("Saved sessions")
+                    .strong()
+                    .monospace()
+                    .color(TEXT_PRIMARY),
+            );
+            ui.label(RichText::new(model.session_count().to_string()).color(ACCENT_GREEN));
             ui.add_space(6.0);
-            ui.label(RichText::new("Imported").strong());
-            ui.label(model.imported_session_count().to_string());
+            ui.label(
+                RichText::new("Imported")
+                    .strong()
+                    .monospace()
+                    .color(TEXT_PRIMARY),
+            );
+            ui.label(RichText::new(model.imported_session_count().to_string()).color(TEXT_MUTED));
             ui.add_space(6.0);
-            ui.label(RichText::new("SSH").strong());
-            ui.label(model.protocol_count(Protocol::Ssh).to_string());
+            ui.label(
+                RichText::new("SSH")
+                    .strong()
+                    .monospace()
+                    .color(TEXT_PRIMARY),
+            );
+            ui.label(
+                RichText::new(model.protocol_count(Protocol::Ssh).to_string()).color(ACCENT_GREEN),
+            );
         });
 }
 
 fn detail_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.label(RichText::new(label).strong());
-    ui.label(value);
+    ui.label(RichText::new(label).strong().monospace().color(TEXT_MUTED));
+    ui.label(RichText::new(value).monospace().color(TEXT_PRIMARY));
     ui.end_row();
 }
 
 fn code_block(ui: &mut egui::Ui, value: &str) {
     Frame::group(ui.style())
-        .fill(Color32::from_rgb(236, 228, 218))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(214, 198, 181)))
+        .fill(TERMINAL_BLACK)
+        .stroke(Stroke::new(1.0, TERMINAL_BORDER))
         .inner_margin(Margin::same(10))
         .show(ui, |ui| {
-            ui.monospace(value);
+            ui.label(RichText::new(value).monospace().color(TEXT_PRIMARY));
         });
 }
 
@@ -1381,11 +1461,17 @@ fn empty_state_card(ui: &mut egui::Ui, title: &str, body: &str) {
 
 fn section_card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     Frame::group(ui.style())
-        .fill(Color32::from_rgb(244, 237, 228))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(214, 198, 181)))
+        .fill(CARD_BG)
+        .stroke(Stroke::new(1.0, STROKE_SOFT))
         .inner_margin(Margin::same(14))
         .show(ui, |ui| {
-            ui.label(RichText::new(title).size(18.0).strong());
+            ui.label(
+                RichText::new(title)
+                    .size(17.0)
+                    .strong()
+                    .monospace()
+                    .color(ACCENT_GREEN),
+            );
             ui.add_space(8.0);
             add_contents(ui);
         });
@@ -1456,12 +1542,12 @@ fn pending_host_key_prompt(
 
 fn terminal_surface(ui: &mut egui::Ui, screen: &str) -> egui::Response {
     Frame::group(ui.style())
-        .fill(Color32::from_rgb(26, 29, 33))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(63, 72, 82)))
+        .fill(TERMINAL_BLACK)
+        .stroke(Stroke::new(1.0, TERMINAL_BORDER))
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
             ui.scope(|ui| {
-                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(230, 235, 240));
+                ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
                 ScrollArea::vertical()
                     .id_salt("rustty-terminal-screen")
                     .stick_to_bottom(true)
@@ -1476,12 +1562,12 @@ fn terminal_surface(ui: &mut egui::Ui, screen: &str) -> egui::Response {
 
 fn transcript_surface(ui: &mut egui::Ui, transcript: &[TerminalTranscriptEntry]) {
     Frame::group(ui.style())
-        .fill(Color32::from_rgb(26, 29, 33))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(63, 72, 82)))
+        .fill(TERMINAL_BLACK)
+        .stroke(Stroke::new(1.0, TERMINAL_BORDER))
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
             ui.scope(|ui| {
-                ui.visuals_mut().override_text_color = Some(Color32::from_rgb(230, 235, 240));
+                ui.visuals_mut().override_text_color = Some(TEXT_PRIMARY);
                 ScrollArea::vertical()
                     .id_salt("rustty-terminal-transcript")
                     .stick_to_bottom(true)

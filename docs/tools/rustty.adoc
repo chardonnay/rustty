@@ -38,6 +38,9 @@ The current launcher window provides:
 * a quick-connect draft panel that builds launch previews for ad-hoc targets
 * a tool catalog for the other RusTTY binaries and their documentation paths
 * config diagnostics, sample-config creation, and path copy actions
+* a darker terminal-first visual style with monospace-heavy typography,
+  charcoal panels, and green-accent terminal surfaces inspired by PuTTY's
+  classic dark session presentation
 
 During the bootstrap phase, `rustty` also supports printing a sample RusTTY
 configuration file for schema review and repository validation.
@@ -87,6 +90,8 @@ diagnostic output suitable for support and regression testing.
 
 `rustty` aims for behavioral familiarity, not a pixel-for-pixel PuTTY clone.
 Intentional differences must be recorded in changelogs and release notes.
+The current launcher theme now intentionally leans into a darker
+terminal-operator aesthetic instead of a light form-editor look.
 
 == Examples
 

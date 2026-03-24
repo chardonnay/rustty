@@ -2,6 +2,19 @@
 
 == Unreleased
 
+[#rustty-dark-ui]
+=== Dark UI refresh
+
+* Restyled the `rustty` launcher and dedicated terminal window around a
+  darker, terminal-first palette inspired by PuTTY's classic dark session
+  presentation.
+* Switched more of the launcher typography, session summaries, and terminal
+  chrome to a monospace-heavy, high-contrast look so the desktop client reads
+  less like a light form editor.
+* Reworked host-key prompts, diagnostics, and session state messages so the
+  active SSH workflow now stays visually consistent with the darker terminal
+  surfaces.
+
 [#rustty-session-management]
 === GUI session management
 

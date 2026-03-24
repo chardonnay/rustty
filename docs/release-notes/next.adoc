@@ -5,6 +5,10 @@
 
 === Configuration
 
+* `rustty` now ships a darker, terminal-first launcher theme with
+  PuTTY-inspired contrast, monospace-heavy typography, and stronger terminal
+  surfaces for saved-session work.
+  xref:../changelogs/rustty.adoc#rustty-dark-ui[Changelog entry]
 * `rustty` now includes a real GUI session editor that can create, update,
   rename, and delete saved RusTTY sessions, plus a launcher-side PuTTY
   session import panel with dry-run reporting.

@@ -6,6 +6,19 @@ This file tracks suite-level milestones. Tool-specific details live under
 
 == Unreleased
 
+[#suite-rustty-dark-ui]
+=== rustty dark UI refresh
+
+* Restyled the native `rustty` launcher and session window around a darker,
+  PuTTY-inspired terminal-first palette instead of the earlier light bootstrap
+  look.
+* Switched the launcher typography and terminal surfaces toward a stronger
+  monospace, high-contrast presentation so saved sessions and shell output
+  read more like an operator console.
+* Unified host-key prompts, status messages, diagnostics, and session cards
+  under the darker theme so the GUI no longer mixes light bootstrap panels
+  with terminal workflows.
+
 [#suite-rustty-session-management]
 === rustty session management
 

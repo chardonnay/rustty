@@ -82,7 +82,9 @@ The workspace currently provides:
   session editor with save/delete flows, GUI-side PuTTY session import,
   quick-connect draft, a dedicated saved-session terminal window for
   transcript-style SSH command runs plus a first live interactive SSH shell,
-  tool catalog, diagnostics, sample-config creation, and the existing
+  a darker PuTTY-inspired visual treatment with terminal-first typography and
+  higher-contrast terminal surfaces, tool catalog, diagnostics, sample-config
+  creation, and the existing
   config/bootstrap migration helpers,
 * a config bootstrap flow in `rustty`, including sample session auth defaults,
   default known-hosts path discovery, exact OpenSSH-style host-key import,

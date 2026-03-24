@@ -8,12 +8,12 @@ use std::{
 };
 
 use rustty_config::{
-    AppConfig, ImportSource, StoredSession, init_config, load_config, load_known_host_keys,
-    persist_known_host_key,
+    AppConfig, ImportPuttySessionsResult, ImportSource, StoredSession, import_putty_sessions,
+    init_config, load_config, load_known_host_keys, persist_known_host_key, save_config,
 };
 use rustty_core::{
-    HostKeyPolicy, NEXT_RELEASE_NOTES_PATH, PRODUCT_NAME, Protocol, SUITE_CHANGELOG_PATH,
-    StorageFormat,
+    DynamicForwardSpec, HostKeyPolicy, NEXT_RELEASE_NOTES_PATH, PRODUCT_NAME, PortForwardSpec,
+    Protocol, RemoteForwardSpec, SUITE_CHANGELOG_PATH, SessionConfig, StorageFormat,
 };
 use rustty_transport::{
     HostKeyCheck, InteractiveShellEvent, InteractiveShellSession, SshAuthentication,
@@ -151,6 +151,160 @@ impl QuickConnectDraft {
                 "This draft protocol is handled by another RusTTY tool.".to_owned()
             }
         }
+    }
+}
+
+/// Editable GUI-side session draft that can be saved into the RusTTY config.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SessionEditorDraft {
+    /// Original session name if this draft edits an existing saved session.
+    pub source_session_name: Option<String>,
+    /// Optional import provenance shown for migrated sessions.
+    pub imported_from: Option<ImportSource>,
+    /// Human-readable session name.
+    pub name: String,
+    /// Session protocol.
+    pub protocol: Protocol,
+    /// Target host, endpoint, or serial device.
+    pub host: String,
+    /// Optional port override.
+    pub port: String,
+    /// Preferred username.
+    pub username: String,
+    /// SSH host-key handling policy.
+    pub host_key_policy: HostKeyPolicy,
+    /// Password environment variable name.
+    pub password_env: String,
+    /// Private-key path.
+    pub private_key_path: String,
+    /// Private-key passphrase environment variable name.
+    pub key_passphrase_env: String,
+    /// Keyboard-interactive response environment variable name.
+    pub keyboard_interactive_env: String,
+    /// Local forwarding rules in `source -> target` form.
+    pub local_forwards: String,
+    /// Remote forwarding rules in `source -> target` form.
+    pub remote_forwards: String,
+    /// Dynamic forwarding listeners, one per line.
+    pub dynamic_forwards: String,
+    /// Optional operator or migration notes.
+    pub notes: String,
+}
+
+impl Default for SessionEditorDraft {
+    fn default() -> Self {
+        Self {
+            source_session_name: None,
+            imported_from: None,
+            name: String::new(),
+            protocol: Protocol::Ssh,
+            host: String::new(),
+            port: String::new(),
+            username: String::new(),
+            host_key_policy: HostKeyPolicy::Ask,
+            password_env: String::new(),
+            private_key_path: String::new(),
+            key_passphrase_env: String::new(),
+            keyboard_interactive_env: String::new(),
+            local_forwards: String::new(),
+            remote_forwards: String::new(),
+            dynamic_forwards: String::new(),
+            notes: String::new(),
+        }
+    }
+}
+
+impl SessionEditorDraft {
+    /// Builds an editable draft from a persisted session.
+    #[must_use]
+    pub fn from_stored_session(stored_session: &StoredSession) -> Self {
+        let session = &stored_session.session;
+        Self {
+            source_session_name: Some(session.name.clone()),
+            imported_from: stored_session.imported_from,
+            name: session.name.clone(),
+            protocol: session.protocol,
+            host: session.host.clone().unwrap_or_default(),
+            port: session
+                .port
+                .map(|port| port.to_string())
+                .unwrap_or_default(),
+            username: session.username.clone().unwrap_or_default(),
+            host_key_policy: session.host_key_policy,
+            password_env: session.password_env.clone().unwrap_or_default(),
+            private_key_path: session.private_key_path.clone().unwrap_or_default(),
+            key_passphrase_env: session.key_passphrase_env.clone().unwrap_or_default(),
+            keyboard_interactive_env: session.keyboard_interactive_env.clone().unwrap_or_default(),
+            local_forwards: render_forward_lines(&session.port_forwards),
+            remote_forwards: render_remote_forward_lines(&session.remote_forwards),
+            dynamic_forwards: render_dynamic_forward_lines(&session.dynamic_forwards),
+            notes: stored_session.notes.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Returns whether this draft edits an existing saved session.
+    #[must_use]
+    pub fn is_editing_existing_session(&self) -> bool {
+        self.source_session_name.is_some()
+    }
+
+    /// Builds a CLI-oriented launch preview for the current draft.
+    #[must_use]
+    pub fn preview(&self) -> String {
+        let session_name = if self.name.trim().is_empty() {
+            "<unnamed-session>"
+        } else {
+            self.name.trim()
+        };
+
+        match self.protocol {
+            Protocol::Ssh => format!("rusplink --session {}", shell_escape(session_name)),
+            Protocol::Scp => format!("ruscp --session {}", shell_escape(session_name)),
+            Protocol::Sftp => format!("rusftp --session {}", shell_escape(session_name)),
+            Protocol::Telnet | Protocol::Raw | Protocol::Rlogin | Protocol::Serial => format!(
+                "{} session '{}' is saved in RusTTY config, but the embedded GUI transport window is still pending for this protocol.",
+                self.protocol.label(),
+                session_name
+            ),
+            Protocol::Agent | Protocol::Keygen => {
+                "This draft belongs to a non-terminal RusTTY tool.".to_owned()
+            }
+        }
+    }
+
+    fn to_stored_session(&self) -> Result<StoredSession, String> {
+        let session_name = self.name.trim();
+        if session_name.is_empty() {
+            return Err("Saved session names must not be empty".to_owned());
+        }
+
+        let mut session = SessionConfig::new(session_name, self.protocol);
+        session.host = normalized_optional_string(&self.host);
+        session.username = normalized_optional_string(&self.username);
+        session.password_env = normalized_optional_string(&self.password_env);
+        session.private_key_path = normalized_optional_string(&self.private_key_path);
+        session.key_passphrase_env = normalized_optional_string(&self.key_passphrase_env);
+        session.keyboard_interactive_env =
+            normalized_optional_string(&self.keyboard_interactive_env);
+        session.port = parse_optional_port(&self.port)?;
+        session.host_key_policy = self.host_key_policy;
+        session.port_forwards = parse_forward_lines(
+            session_name,
+            self.local_forwards.as_str(),
+            PortForwardSpec::new,
+        )?;
+        session.remote_forwards = parse_forward_lines(
+            session_name,
+            self.remote_forwards.as_str(),
+            RemoteForwardSpec::new,
+        )?;
+        session.dynamic_forwards = parse_dynamic_forward_lines(self.dynamic_forwards.as_str());
+
+        Ok(StoredSession {
+            session,
+            imported_from: self.imported_from,
+            notes: normalized_optional_string(&self.notes),
+        })
     }
 }
 
@@ -541,6 +695,9 @@ pub struct LauncherModel {
     filter_text: String,
     selected_session_name: Option<String>,
     quick_connect: QuickConnectDraft,
+    session_editor: SessionEditorDraft,
+    putty_import_path: String,
+    putty_import_report: Option<String>,
     status_message: String,
     config_state: ConfigLoadState,
     terminal_window: Option<TerminalWindowState>,
@@ -557,11 +714,15 @@ impl LauncherModel {
             filter_text: String::new(),
             selected_session_name: None,
             quick_connect: QuickConnectDraft::default(),
+            session_editor: SessionEditorDraft::default(),
+            putty_import_path: String::new(),
+            putty_import_report: None,
             status_message: String::new(),
             config_state,
             terminal_window: None,
         };
         model.ensure_selection();
+        model.sync_session_editor_from_selection();
         model.status_message = model.default_status_message();
         model
     }
@@ -605,6 +766,56 @@ impl LauncherModel {
         &self.quick_connect
     }
 
+    /// Returns the current editable session draft.
+    #[must_use]
+    pub const fn session_editor(&self) -> &SessionEditorDraft {
+        &self.session_editor
+    }
+
+    /// Returns mutable access to the editable session draft.
+    pub fn session_editor_mut(&mut self) -> &mut SessionEditorDraft {
+        &mut self.session_editor
+    }
+
+    /// Starts a fresh saved-session draft.
+    pub fn start_new_session_draft(&mut self) {
+        self.selected_session_name = None;
+        self.session_editor = SessionEditorDraft::default();
+        self.status_message =
+            "Editing a new RusTTY session draft. Save it to write a real session to config."
+                .to_owned();
+    }
+
+    /// Reloads the editor from the currently selected saved session.
+    pub fn load_editor_from_selected_session(&mut self) -> Result<(), String> {
+        let selected_session = self
+            .selected_session()
+            .ok_or_else(|| "Select a saved session before reloading the editor".to_owned())?;
+        self.session_editor = SessionEditorDraft::from_stored_session(&selected_session);
+        self.status_message = format!(
+            "Loaded session '{}' into the editor",
+            selected_session.session.name
+        );
+        Ok(())
+    }
+
+    /// Returns the current PuTTY import source path draft.
+    #[must_use]
+    pub fn putty_import_path(&self) -> &str {
+        &self.putty_import_path
+    }
+
+    /// Returns mutable access to the PuTTY import source path draft.
+    pub fn putty_import_path_mut(&mut self) -> &mut String {
+        &mut self.putty_import_path
+    }
+
+    /// Returns the most recent PuTTY import report.
+    #[must_use]
+    pub fn putty_import_report(&self) -> Option<&str> {
+        self.putty_import_report.as_deref()
+    }
+
     /// Returns the current status message shown in the GUI footer.
     #[must_use]
     pub fn status_message(&self) -> &str {
@@ -620,6 +831,7 @@ impl LauncherModel {
     pub fn reload(&mut self) {
         self.config_state = read_config_state(&self.options.config_path);
         self.ensure_selection();
+        self.sync_session_editor_from_selection();
         self.status_message = self.default_status_message();
     }
 
@@ -635,6 +847,134 @@ impl LauncherModel {
                 result.path.display()
             )
         };
+        Ok(())
+    }
+
+    /// Saves the current session-editor draft to the RusTTY config file.
+    pub fn save_session_editor(&mut self) -> Result<(), String> {
+        let stored_session = self.session_editor.to_stored_session()?;
+        let original_name = self.session_editor.source_session_name.clone();
+
+        if let Some(terminal_window) = &self.terminal_window {
+            let edits_current_terminal = original_name
+                .as_deref()
+                .is_some_and(|name| name == terminal_window.session_name)
+                || terminal_window.session_name == stored_session.session.name;
+            if edits_current_terminal && terminal_window.has_active_task() {
+                return Err(format!(
+                    "Wait for the terminal activity in '{}' to finish before changing or renaming that session",
+                    terminal_window.session_name
+                ));
+            }
+        }
+
+        let mut config = self.editable_config()?;
+        let existing_index = original_name.as_deref().and_then(|name| {
+            config
+                .session_store
+                .sessions
+                .iter()
+                .position(|candidate| candidate.session.name == name)
+        });
+
+        match existing_index {
+            Some(index) => config.session_store.sessions[index] = stored_session.clone(),
+            None => config.session_store.sessions.push(stored_session.clone()),
+        }
+
+        save_config(&self.options.config_path, &config).map_err(|error| error.to_string())?;
+        self.config_state = ConfigLoadState::Loaded(config);
+        self.selected_session_name = Some(stored_session.session.name.clone());
+        self.session_editor = SessionEditorDraft::from_stored_session(&stored_session);
+        self.refresh_terminal_window_binding(original_name.as_deref(), &stored_session);
+        self.ensure_selection();
+        self.status_message = format!(
+            "Saved session '{}' to {}",
+            stored_session.session.name,
+            self.options.config_path.display()
+        );
+        Ok(())
+    }
+
+    /// Deletes the currently selected saved session from the RusTTY config.
+    pub fn delete_selected_session(&mut self) -> Result<(), String> {
+        let selected_session = self
+            .selected_session()
+            .ok_or_else(|| "Select a saved session before deleting it".to_owned())?;
+
+        if let Some(terminal_window) = &self.terminal_window {
+            if terminal_window.session_name == selected_session.session.name
+                && terminal_window.has_active_task()
+            {
+                return Err(format!(
+                    "Wait for the terminal activity in '{}' to finish before deleting that session",
+                    terminal_window.session_name
+                ));
+            }
+        }
+
+        let mut config = self.editable_config()?;
+        let Some(index) = config
+            .session_store
+            .sessions
+            .iter()
+            .position(|candidate| candidate.session.name == selected_session.session.name)
+        else {
+            return Err(format!(
+                "Session '{}' is no longer present in the current config",
+                selected_session.session.name
+            ));
+        };
+
+        config.session_store.sessions.remove(index);
+        save_config(&self.options.config_path, &config).map_err(|error| error.to_string())?;
+        self.config_state = ConfigLoadState::Loaded(config);
+        self.selected_session_name = None;
+        if self
+            .terminal_window
+            .as_ref()
+            .is_some_and(|terminal_window| {
+                terminal_window.session_name == selected_session.session.name
+            })
+        {
+            self.terminal_window = None;
+        }
+        self.ensure_selection();
+        self.sync_session_editor_from_selection();
+        self.status_message = format!(
+            "Deleted session '{}' from {}",
+            selected_session.session.name,
+            self.options.config_path.display()
+        );
+        Ok(())
+    }
+
+    /// Imports PuTTY sessions from the GUI-supplied source path.
+    pub fn import_putty_sessions_from_editor(&mut self, dry_run: bool) -> Result<(), String> {
+        let source_path = self.putty_import_path.trim();
+        if source_path.is_empty() {
+            return Err("Enter a PuTTY registry export, PuTTY session file, or sessions directory path before importing".to_owned());
+        }
+
+        let result = import_putty_sessions(source_path, &self.options.config_path, dry_run)
+            .map_err(|error| error.to_string())?;
+        self.putty_import_report = Some(format_putty_import_report(&result, dry_run));
+        if dry_run {
+            self.status_message = format!(
+                "Dry-run PuTTY import scanned {} session(s): {} new, {} already present, {} skipped",
+                result.discovered_sessions,
+                result.imported,
+                result.already_present,
+                result.skipped_total()
+            );
+        } else {
+            self.reload();
+            self.status_message = format!(
+                "Imported {} PuTTY session(s) into {}",
+                result.imported,
+                self.options.config_path.display()
+            );
+        }
         Ok(())
     }
 
@@ -739,6 +1079,7 @@ impl LauncherModel {
         }
 
         self.selected_session_name = Some(name.to_owned());
+        self.sync_session_editor_from_selection();
     }
 
     /// Copies the selected session details into the quick-connect draft.
@@ -1562,6 +1903,21 @@ impl LauncherModel {
             format!("saved_sessions={}", self.session_count()),
             format!("imported_sessions={}", self.imported_session_count()),
             format!(
+                "session_editor_source={}",
+                self.session_editor
+                    .source_session_name
+                    .clone()
+                    .unwrap_or_else(|| "new".to_owned())
+            ),
+            format!(
+                "putty_import_path={}",
+                if self.putty_import_path.is_empty() {
+                    "empty"
+                } else {
+                    self.putty_import_path.as_str()
+                }
+            ),
+            format!(
                 "terminal_window_session={}",
                 self.terminal_window
                     .as_ref()
@@ -1593,6 +1949,16 @@ impl LauncherModel {
         }
     }
 
+    fn editable_config(&self) -> Result<AppConfig, String> {
+        match &self.config_state {
+            ConfigLoadState::Loaded(config) => Ok(config.clone()),
+            ConfigLoadState::Missing => Ok(AppConfig::empty()),
+            ConfigLoadState::Error(message) => Err(format!(
+                "Fix the config load error before editing sessions: {message}"
+            )),
+        }
+    }
+
     fn ensure_selection(&mut self) {
         let Some(config) = self.config() else {
             self.selected_session_name = None;
@@ -1611,6 +1977,14 @@ impl LauncherModel {
             .sessions()
             .first()
             .map(|stored_session| stored_session.session.name.clone());
+    }
+
+    fn sync_session_editor_from_selection(&mut self) {
+        self.session_editor = self
+            .selected_session()
+            .as_ref()
+            .map(SessionEditorDraft::from_stored_session)
+            .unwrap_or_default();
     }
 
     fn default_status_message(&self) -> String {
@@ -1893,6 +2267,24 @@ impl LauncherModel {
         self.config()?
             .find_session(&terminal_window.session_name)
             .cloned()
+    }
+
+    fn refresh_terminal_window_binding(
+        &mut self,
+        original_name: Option<&str>,
+        stored_session: &StoredSession,
+    ) {
+        let Some(terminal_window) = &mut self.terminal_window else {
+            return;
+        };
+
+        if original_name.is_none_or(|name| name != terminal_window.session_name) {
+            return;
+        }
+
+        terminal_window.session_name = stored_session.session.name.clone();
+        terminal_window.protocol = stored_session.session.protocol;
+        terminal_window.endpoint = session_endpoint_summary(stored_session);
     }
 }
 
@@ -2292,6 +2684,108 @@ fn normalized_filter(filter_text: &str) -> String {
     filter_text.trim().to_ascii_lowercase()
 }
 
+fn normalized_optional_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
+}
+
+fn parse_optional_port(raw_port: &str) -> Result<Option<u16>, String> {
+    let trimmed = raw_port.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    trimmed
+        .parse::<u16>()
+        .map(Some)
+        .map_err(|_| format!("Invalid port value: {trimmed}"))
+}
+
+fn parse_forward_lines<T>(
+    session_name: &str,
+    raw_value: &str,
+    build_spec: impl Fn(String, String) -> T,
+) -> Result<Vec<T>, String> {
+    let mut rules = Vec::new();
+    for (index, line) in raw_value.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let Some((source, target)) = trimmed.split_once("->") else {
+            return Err(format!(
+                "Session '{session_name}' forwarding line {} must use 'source -> target'",
+                index + 1
+            ));
+        };
+        let source = source.trim();
+        let target = target.trim();
+        if source.is_empty() || target.is_empty() {
+            return Err(format!(
+                "Session '{session_name}' forwarding line {} must define both source and target",
+                index + 1
+            ));
+        }
+
+        rules.push(build_spec(source.to_owned(), target.to_owned()));
+    }
+
+    Ok(rules)
+}
+
+fn parse_dynamic_forward_lines(raw_value: &str) -> Vec<DynamicForwardSpec> {
+    raw_value
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| DynamicForwardSpec::new(line.to_owned()))
+        .collect()
+}
+
+fn render_forward_lines(forwards: &[PortForwardSpec]) -> String {
+    forwards
+        .iter()
+        .map(|forward| format!("{} -> {}", forward.source, forward.target))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_remote_forward_lines(forwards: &[RemoteForwardSpec]) -> String {
+    forwards
+        .iter()
+        .map(|forward| format!("{} -> {}", forward.source, forward.target))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn render_dynamic_forward_lines(forwards: &[DynamicForwardSpec]) -> String {
+    forwards
+        .iter()
+        .map(|forward| forward.listen.clone())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_putty_import_report(result: &ImportPuttySessionsResult, dry_run: bool) -> String {
+    format!(
+        "Mode: {}\nSource: {}\nDestination: {}\nDiscovered sessions: {}\nImported: {}\nAlready present: {}\nSkipped unsupported protocol: {}\nSkipped unlaunchable: {}\nSkipped conflicting: {}\nSkipped malformed: {}\nSkipped outside target: {}\nSkipped blank/comment: {}\nSkipped total: {}",
+        if dry_run { "Dry run" } else { "Imported" },
+        result.source_path.display(),
+        result.destination_path.display(),
+        result.discovered_sessions,
+        result.imported,
+        result.already_present,
+        result.skipped_unsupported_protocol,
+        result.skipped_unlaunchable,
+        result.skipped_conflicting,
+        result.skipped_malformed,
+        result.skipped_outside_target,
+        result.skipped_blank_or_comment,
+        result.skipped_total(),
+    )
+}
+
 fn session_matches_filter(stored_session: &StoredSession, filter: &str) -> bool {
     if filter.is_empty() {
         return true;
@@ -2419,7 +2913,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
 
-    use rustty_config::{AppConfig, StoredSession, save_config};
+    use rustty_config::{AppConfig, StoredSession, load_config, save_config};
     use rustty_core::{Protocol, SessionConfig};
 
     use super::{
@@ -2596,6 +3090,120 @@ mod tests {
         append_shell_output(&mut buffer, b"helo\x08lo");
 
         assert_eq!(buffer, "hello");
+    }
+
+    #[test]
+    fn saving_new_session_from_missing_config_creates_real_config() {
+        let workspace = temporary_workspace();
+        let config_path = workspace.join("config.toml");
+        let known_hosts_path = workspace.join("known_hosts");
+        let mut model =
+            LauncherModel::load(LauncherOptions::new(config_path.clone(), known_hosts_path));
+
+        let draft = model.session_editor_mut();
+        draft.name = "prod-ssh".to_owned();
+        draft.host = "prod.example".to_owned();
+        draft.username = "ops".to_owned();
+        draft.password_env = "RUSTTY_PROD_PASSWORD".to_owned();
+
+        model
+            .save_session_editor()
+            .expect("new session should save into a fresh config");
+
+        let loaded = load_config(&config_path).expect("config should load after save");
+        let saved_session = loaded
+            .find_session("prod-ssh")
+            .expect("saved session should be present");
+        assert_eq!(saved_session.session.host.as_deref(), Some("prod.example"));
+        assert_eq!(
+            saved_session.session.password_env.as_deref(),
+            Some("RUSTTY_PROD_PASSWORD")
+        );
+    }
+
+    #[test]
+    fn saving_selected_session_can_rename_it() {
+        let workspace = temporary_workspace();
+        let config_path = workspace.join("config.toml");
+        let known_hosts_path = workspace.join("known_hosts");
+        let mut config = AppConfig::empty();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("prod-ssh", Protocol::Ssh)
+                .with_host("prod.example")
+                .with_username("ops"),
+        ));
+        save_config(&config_path, &config).expect("config should save");
+
+        let mut model =
+            LauncherModel::load(LauncherOptions::new(config_path.clone(), known_hosts_path));
+        let draft = model.session_editor_mut();
+        draft.name = "prod-renamed".to_owned();
+        draft.host = "renamed.example".to_owned();
+
+        model
+            .save_session_editor()
+            .expect("selected session should be renamed");
+
+        let loaded = load_config(&config_path).expect("config should load");
+        assert!(loaded.find_session("prod-ssh").is_none());
+        let renamed = loaded
+            .find_session("prod-renamed")
+            .expect("renamed session should be present");
+        assert_eq!(renamed.session.host.as_deref(), Some("renamed.example"));
+    }
+
+    #[test]
+    fn deleting_selected_session_removes_it_from_config() {
+        let workspace = temporary_workspace();
+        let config_path = workspace.join("config.toml");
+        let known_hosts_path = workspace.join("known_hosts");
+        let mut config = AppConfig::empty();
+        config.add_session(StoredSession::new(
+            SessionConfig::new("prod-ssh", Protocol::Ssh)
+                .with_host("prod.example")
+                .with_username("ops"),
+        ));
+        config.add_session(StoredSession::new(
+            SessionConfig::new("lab-serial", Protocol::Serial).with_host("/dev/ttyUSB0"),
+        ));
+        save_config(&config_path, &config).expect("config should save");
+
+        let mut model =
+            LauncherModel::load(LauncherOptions::new(config_path.clone(), known_hosts_path));
+        model
+            .delete_selected_session()
+            .expect("selected session should delete");
+
+        let loaded = load_config(&config_path).expect("config should load");
+        assert!(loaded.find_session("prod-ssh").is_none());
+        assert!(loaded.find_session("lab-serial").is_some());
+    }
+
+    #[test]
+    fn putty_import_dry_run_reports_without_writing_config() {
+        let workspace = temporary_workspace();
+        let config_path = workspace.join("config.toml");
+        let known_hosts_path = workspace.join("known_hosts");
+        let source_path = workspace.join("putty-session.txt");
+        std::fs::write(
+            &source_path,
+            "HostName=prod.example.com\nProtocol=ssh\nUserName=ops\n",
+        )
+        .expect("source file should be written");
+
+        let mut model =
+            LauncherModel::load(LauncherOptions::new(config_path.clone(), known_hosts_path));
+        *model.putty_import_path_mut() = source_path.display().to_string();
+        model
+            .import_putty_sessions_from_editor(true)
+            .expect("dry-run import should succeed");
+
+        assert!(!config_path.exists());
+        let report = model
+            .putty_import_report()
+            .expect("dry-run import should produce a report");
+        assert!(report.contains("Dry run"));
+        assert!(report.contains("Discovered sessions: 1"));
     }
 
     fn temporary_workspace() -> PathBuf {

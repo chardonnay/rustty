@@ -6,6 +6,17 @@ This file tracks suite-level milestones. Tool-specific details live under
 
 == Unreleased
 
+[#suite-rustty-session-management]
+=== rustty session management
+
+* Added a real GUI session editor to `rustty` for creating, updating,
+  renaming, and deleting saved sessions in `config.toml`.
+* Added launcher-side persistence for auth defaults, host-key policy,
+  forwarding rules, and operator notes so the desktop client no longer stops
+  at the bootstrap sample session.
+* Added a GUI PuTTY session import flow with dry-run reporting for registry
+  exports, Unix session files, and `sessions/` directories.
+
 [#suite-rustty-gui-launcher]
 === rustty GUI launcher
 

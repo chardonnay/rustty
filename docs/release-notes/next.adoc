@@ -5,6 +5,10 @@
 
 === Configuration
 
+* `rustty` now includes a real GUI session editor that can create, update,
+  rename, and delete saved RusTTY sessions, plus a launcher-side PuTTY
+  session import panel with dry-run reporting.
+  xref:../changelogs/rustty.adoc#rustty-session-management[Changelog entry]
 * `rustty` now opens a native GUI launcher with a saved-session browser,
   quick-connect draft, tool catalog, and launcher-side diagnostics instead of
   printing a placeholder banner.

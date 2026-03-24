@@ -78,7 +78,8 @@ In short:
 The workspace currently provides:
 
 * a Rust workspace with shared core, transport, and UI crates,
-* a native `rustty` GUI launcher with a saved-session browser,
+* a native `rustty` GUI launcher with a saved-session browser, a real
+  session editor with save/delete flows, GUI-side PuTTY session import,
   quick-connect draft, a dedicated saved-session terminal window for
   transcript-style SSH command runs plus a first live interactive SSH shell,
   tool catalog, diagnostics, sample-config creation, and the existing

@@ -2,6 +2,17 @@
 
 == Unreleased
 
+[#rustty-session-management]
+=== GUI session management
+
+* Added a real `rustty` session editor that can create, update, rename, and
+  delete saved RusTTY sessions directly from the launcher window.
+* Added GUI persistence for auth defaults, host-key policy, forwarding rules,
+  and operator notes, so the launcher no longer stops at the bootstrap
+  `example-ssh` sample session.
+* Added a launcher-side PuTTY session import panel with dry-run reporting for
+  registry exports, Unix session files, and `sessions/` directories.
+
 [#rustty-interactive-shell-window]
 === Interactive shell window
 

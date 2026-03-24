@@ -15,8 +15,8 @@ use rustty_transport::TerminalSize;
 
 use crate::model::{
     CommandRunnerState, InteractiveShellState, LauncherModel, LauncherOptions, LauncherView,
-    TerminalTranscriptEntry, TerminalTranscriptTone, TerminalWindowSnapshot, host_key_policy_label,
-    import_source_label, session_launch_preview, storage_format_label,
+    SessionEditorDraft, TerminalTranscriptEntry, TerminalTranscriptTone, TerminalWindowSnapshot,
+    host_key_policy_label, import_source_label, session_launch_preview, storage_format_label,
 };
 
 /// Runs the native RusTTY launcher window.
@@ -201,7 +201,7 @@ impl RusttyApp {
                     empty_state_card(
                         ui,
                         "No RusTTY config yet",
-                        "Create a sample config from the toolbar to populate the launcher with a starter SSH session.",
+                        "Create a real session below, import PuTTY sessions, or bootstrap a sample config from the toolbar.",
                     );
                 } else if let Some(error) = self.model.config_error() {
                     empty_state_card(
@@ -211,19 +211,147 @@ impl RusttyApp {
                     );
                 }
 
+                self.render_session_editor(ui);
+                ui.add_space(14.0);
+                self.render_putty_import(ui);
+
                 if let Some(stored_session) = self.model.selected_session() {
+                    ui.add_space(14.0);
                     self.render_selected_session(ui, &stored_session);
                 } else if self.model.has_loaded_config() {
+                    ui.add_space(14.0);
                     empty_state_card(
                         ui,
                         "No saved session selected",
-                        "Use the left-hand list to inspect saved sessions, migration notes, and launch previews.",
+                        "Use the left-hand list to inspect saved sessions, or keep working in the editor to create the next one.",
                     );
                 }
 
                 ui.add_space(14.0);
                 self.render_quick_connect(ui);
             });
+    }
+
+    fn render_session_editor(&mut self, ui: &mut egui::Ui) {
+        section_card(ui, "Session editor", |ui| {
+            let selected_session_exists = self.model.selected_session().is_some();
+            let is_editing_existing = self.model.session_editor().is_editing_existing_session();
+            let imported_from = self.model.session_editor().imported_from;
+            let mut start_new = false;
+            let mut reload_selected = false;
+            let mut save_session = false;
+            let mut delete_selected = false;
+
+            ui.horizontal_wrapped(|ui| {
+                start_new = ui.button("New session").clicked();
+                reload_selected = ui
+                    .add_enabled(
+                        selected_session_exists,
+                        egui::Button::new("Load selected into editor"),
+                    )
+                    .clicked();
+                save_session = ui.button("Save session").clicked();
+                delete_selected = ui
+                    .add_enabled(
+                        is_editing_existing && selected_session_exists,
+                        egui::Button::new("Delete selected session"),
+                    )
+                    .clicked();
+            });
+
+            if start_new {
+                self.model.start_new_session_draft();
+            }
+            if reload_selected {
+                if let Err(error) = self.model.load_editor_from_selected_session() {
+                    self.model.set_status_message(error);
+                }
+            }
+            if save_session {
+                if let Err(error) = self.model.save_session_editor() {
+                    self.model.set_status_message(error);
+                }
+            }
+            if delete_selected {
+                if let Err(error) = self.model.delete_selected_session() {
+                    self.model.set_status_message(error);
+                }
+            }
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(if is_editing_existing {
+                    "Editing the currently selected saved session. Save writes directly to the RusTTY config file."
+                } else {
+                    "Creating a new saved session. Save will create the RusTTY config file if it does not exist yet."
+                })
+                .color(Color32::from_rgb(102, 77, 64)),
+            );
+            if let Some(import_source) = imported_from {
+                ui.label(
+                    RichText::new(format!(
+                        "Imported provenance: {}",
+                        import_source_label(import_source)
+                    ))
+                    .color(Color32::from_rgb(108, 79, 64)),
+                );
+            }
+
+            let preview = {
+                let draft = self.model.session_editor_mut();
+                render_session_editor_form(ui, draft)
+            };
+
+            ui.add_space(10.0);
+            ui.label(RichText::new("Save preview").strong());
+            code_block(ui, &preview);
+        });
+    }
+
+    fn render_putty_import(&mut self, ui: &mut egui::Ui) {
+        section_card(ui, "PuTTY import", |ui| {
+            ui.label(
+                RichText::new(
+                    "Import a PuTTY registry export, a Unix PuTTY session file, or a `sessions/` directory directly into the RusTTY config shown by this launcher.",
+                )
+                .color(Color32::from_rgb(102, 77, 64)),
+            );
+
+            ui.add_space(8.0);
+            Grid::new("rustty-putty-import-grid")
+                .num_columns(2)
+                .spacing(Vec2::new(16.0, 8.0))
+                .show(ui, |ui| {
+                    ui.label("Source path");
+                    ui.text_edit_singleline(self.model.putty_import_path_mut());
+                    ui.end_row();
+                });
+
+            let mut dry_run = false;
+            let mut import_now = false;
+            ui.add_space(8.0);
+            ui.horizontal_wrapped(|ui| {
+                dry_run = ui.button("Dry-run import").clicked();
+                import_now = ui.button("Import into config").clicked();
+            });
+
+            if dry_run {
+                if let Err(error) = self.model.import_putty_sessions_from_editor(true) {
+                    self.model.set_status_message(error);
+                }
+            }
+            if import_now {
+                if let Err(error) = self.model.import_putty_sessions_from_editor(false) {
+                    self.model.set_status_message(error);
+                }
+            }
+
+            if let Some(report) = self.model.putty_import_report() {
+                ui.add_space(10.0);
+                ui.label(RichText::new("Last import report").strong());
+                code_block(ui, report);
+            }
+        });
     }
 
     fn render_selected_session(&mut self, ui: &mut egui::Ui, stored_session: &StoredSession) {
@@ -469,7 +597,7 @@ impl RusttyApp {
                 }
                 ui.label(
                     RichText::new(
-                        "This draft is a launcher-side planning aid until ad-hoc GUI transport and session editing land.",
+                        "This draft is still a launcher-side planning aid. Real saved-session editing now lives in the session editor above, while ad-hoc GUI transport remains queued.",
                     )
                     .italics()
                     .color(Color32::from_rgb(112, 85, 70)),
@@ -546,8 +674,9 @@ impl RusttyApp {
 
                 section_card(ui, "Current GUI scope", |ui| {
                     for line in [
-                        "Native launcher window with session browser and quick-connect draft",
-                        "Config-state diagnostics, sample-config creation, and path copy actions",
+                        "Native launcher window with session browser, session editor, and quick-connect draft",
+                        "Config-state diagnostics, sample-config creation, session persistence, and path copy actions",
+                        "PuTTY session import from registry exports, session files, and sessions directories",
                         "Dedicated saved-session terminal window with transcript history and host-key confirmation",
                         "Inspection of saved auth defaults, forwarding, and import provenance",
                         "Tool catalog with manual and changelog path discovery",
@@ -558,9 +687,9 @@ impl RusttyApp {
 
                 section_card(ui, "Next terminal milestones", |ui| {
                     for line in [
-                        "Upgrade the saved-session terminal window from command transcripts to a live interactive SSH shell",
                         "Add real terminal emulation coverage for ANSI/VT state, resize, scrollback, and copy/paste",
-                        "Extend the GUI launcher into session editing, saving, and non-SSH transport windows",
+                        "Extend the GUI launcher from SSH-first sessions into non-SSH transport windows",
+                        "Promote ad-hoc quick-connect drafts from planning previews into live transport launches",
                     ] {
                         ui.label(format!("• {line}"));
                     }
@@ -1079,6 +1208,111 @@ fn copy_text(
 ) {
     context.copy_text(text);
     model.set_status_message(status_message);
+}
+
+fn render_session_editor_form(ui: &mut egui::Ui, draft: &mut SessionEditorDraft) -> String {
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label("Protocol");
+        ComboBox::from_id_salt("rustty-session-editor-protocol")
+            .selected_text(draft.protocol.label())
+            .show_ui(ui, |ui| {
+                for protocol in [
+                    Protocol::Ssh,
+                    Protocol::Scp,
+                    Protocol::Sftp,
+                    Protocol::Telnet,
+                    Protocol::Raw,
+                    Protocol::Rlogin,
+                    Protocol::Serial,
+                ] {
+                    ui.selectable_value(&mut draft.protocol, protocol, protocol.label());
+                }
+            });
+
+        ui.add_space(16.0);
+        ui.label("Host-key policy");
+        ComboBox::from_id_salt("rustty-session-editor-host-key-policy")
+            .selected_text(host_key_policy_label(draft.host_key_policy))
+            .show_ui(ui, |ui| {
+                for policy in [
+                    rustty_core::HostKeyPolicy::Ask,
+                    rustty_core::HostKeyPolicy::Strict,
+                    rustty_core::HostKeyPolicy::AcceptNew,
+                ] {
+                    ui.selectable_value(
+                        &mut draft.host_key_policy,
+                        policy,
+                        host_key_policy_label(policy),
+                    );
+                }
+            });
+    });
+
+    ui.add_space(8.0);
+    Grid::new("rustty-session-editor-grid")
+        .num_columns(2)
+        .spacing(Vec2::new(16.0, 8.0))
+        .show(ui, |ui| {
+            ui.label("Session name");
+            ui.text_edit_singleline(&mut draft.name);
+            ui.end_row();
+
+            ui.label("Host / endpoint");
+            ui.text_edit_singleline(&mut draft.host);
+            ui.end_row();
+
+            ui.label("Port");
+            ui.text_edit_singleline(&mut draft.port);
+            ui.end_row();
+
+            ui.label("Username");
+            ui.text_edit_singleline(&mut draft.username);
+            ui.end_row();
+
+            ui.label("Password env");
+            ui.text_edit_singleline(&mut draft.password_env);
+            ui.end_row();
+
+            ui.label("Private key path");
+            ui.text_edit_singleline(&mut draft.private_key_path);
+            ui.end_row();
+
+            ui.label("Key passphrase env");
+            ui.text_edit_singleline(&mut draft.key_passphrase_env);
+            ui.end_row();
+
+            ui.label("Keyboard-interactive env");
+            ui.text_edit_singleline(&mut draft.keyboard_interactive_env);
+            ui.end_row();
+        });
+
+    ui.add_space(10.0);
+    ui.label(RichText::new("Forwarding").strong());
+    ui.label(
+        RichText::new(
+            "Use one rule per line as `source -> target`. Dynamic forwards expect one listen address per line.",
+        )
+        .color(Color32::from_rgb(108, 79, 64)),
+    );
+
+    ui.add_space(8.0);
+    ui.columns(3, |columns| {
+        columns[0].label(RichText::new("Local forwards").strong());
+        columns[0].add(egui::TextEdit::multiline(&mut draft.local_forwards).desired_rows(4));
+
+        columns[1].label(RichText::new("Remote forwards").strong());
+        columns[1].add(egui::TextEdit::multiline(&mut draft.remote_forwards).desired_rows(4));
+
+        columns[2].label(RichText::new("Dynamic forwards").strong());
+        columns[2].add(egui::TextEdit::multiline(&mut draft.dynamic_forwards).desired_rows(4));
+    });
+
+    ui.add_space(10.0);
+    ui.label(RichText::new("Notes").strong());
+    ui.add(egui::TextEdit::multiline(&mut draft.notes).desired_rows(3));
+
+    draft.preview()
 }
 
 fn protocol_badge(ui: &mut egui::Ui, protocol: Protocol) {

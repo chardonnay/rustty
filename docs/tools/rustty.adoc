@@ -26,6 +26,10 @@ backed by the shared RusTTY core and shared UI layer.
 The current launcher window provides:
 
 * a saved-session browser with search and provenance display
+* a real session editor that can create, update, rename, and delete saved
+  RusTTY sessions directly from the GUI
+* a GUI-side PuTTY session import panel for registry exports, Unix session
+  files, and `sessions/` directories
 * a selected-session detail pane for auth defaults, host-key policy, and
   forwarding rules
 * a dedicated saved-session terminal window for SSH command execution and a
@@ -53,9 +57,9 @@ It now also provides a bootstrap PuTTY session import path into RusTTY-owned
 `rustty` will read imported PuTTY sessions but should save new or updated
 configuration in RusTTY-owned storage.
 
-The current sample config now demonstrates session-level SSH defaults such as
-stored usernames and password environment variable names, so future GUI editing
-work has a concrete schema target from the beginning.
+The GUI session editor now writes real RusTTY-native session data straight to
+`config.toml`, including session names, protocols, auth defaults, host-key
+policy, forwarding rules, and operator notes.
 
 The launcher-side SSH command runner and the first live interactive shell
 currently reuse saved session values for
@@ -71,6 +75,8 @@ commands report what was imported, already present, or skipped.
 Session migration currently runs through `rustty --import-putty-sessions`,
 which accepts PuTTY `.reg` exports, Unix session directories, or single Unix
 session files and merges normalized sessions into a RusTTY config file.
+The same migration flow is now also available from the launcher window through
+an explicit PuTTY import panel with dry-run reporting.
 
 == Logging and Diagnostics
 
@@ -138,6 +144,8 @@ rustty --import-putty-sessions ~/.putty/sessions --dry-run
 
 Within the launcher window:
 
+. Create or edit a saved session in the session editor, or import PuTTY
+  sessions into the launcher-visible config.
 . Select a saved SSH session.
 . Open the dedicated terminal window for that session.
 . Either enter a remote command or start the interactive shell in the terminal
@@ -159,8 +167,8 @@ CLI:
 
 * it currently supports live shells and non-interactive commands for saved SSH
   sessions only
-* it does not yet expose SSH-agent auth, forwarding overrides, or ad-hoc
-  quick-connect execution from the GUI
+* it does not yet expose SSH-agent auth, forwarding overrides at launch time,
+  or ad-hoc quick-connect execution from the GUI
 * it presents a lightweight live shell buffer with basic ANSI stripping, not a
   full terminal emulator suitable for TUIs like `vim` or `top`
 
